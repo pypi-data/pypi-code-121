@@ -1,0 +1,7 @@
+class JobStatus:
+    PENDING = 'PENDING'
+    STARTED = 'STARTED'
+    SUCCESS = 'SUCCESS'
+    FAILURE = 'FAILURE'
+    RETRY = 'RETRY'
+    REVOKED = 'REVOKED'
