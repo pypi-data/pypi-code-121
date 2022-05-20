@@ -1,0 +1,1 @@
+from savingfigures.savingfigures import auto_save, writeGif
