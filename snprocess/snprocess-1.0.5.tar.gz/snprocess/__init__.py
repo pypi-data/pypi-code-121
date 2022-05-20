@@ -1,0 +1,1 @@
+"""A data handler for SNP files."""
