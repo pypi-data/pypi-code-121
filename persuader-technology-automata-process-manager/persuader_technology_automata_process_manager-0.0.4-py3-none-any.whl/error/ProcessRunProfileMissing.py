@@ -1,0 +1,2 @@
+class ProcessRunProfileMissing(Exception):
+    pass
