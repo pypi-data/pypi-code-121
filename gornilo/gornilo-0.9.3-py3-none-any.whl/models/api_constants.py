@@ -1,0 +1,5 @@
+PUBLIC_FLAG_ID = "public_flag_id"
+PRIVATE_CONTENT = "private_content"
+VULNS = "vulns: "
+FLAG_DESCRIPTION_KEY = "public_flag_description: "
+VULNS_SEP = ":"
