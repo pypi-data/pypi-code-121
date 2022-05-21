@@ -1,0 +1,216 @@
+# (c)2017-2021, Flagship Biosciences, Inc., written by Cris Luengo.
+# (c)2022, Cris Luengo.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+This module is PyDIP, the Python interface to DIPlib.
+
+See the User Manual online: https://diplib.org/diplib-docs/pydip_user_manual.html
+"""
+
+# We set `_reverseDimensions` to True by default, meaning that dimensions are reversed when
+# reading or writing from a Python buffer protocol object. Calling `ReverseDimensions()`
+# sets the `reverseDimensions` value to False.
+_reverseDimensions = True
+
+def ReverseDimensions():
+    """By default, DIPlib uses the (x,y,z) index order. This order is reversed from
+    how NumPy (and, by extension, packages such as scikit-image, matplotlib and
+    imageio) index. Calling `ReverseDimensions()` causes DIPlib, for the remainder
+    of the session, to also follow the (z,y,x) index order, giving dimensions the
+    same order as Python users might be used to. Use this function at the top of
+    your program, right after importing the `diplib` package. There is no way to
+    revert to the default order. Please don't try to mix dimension ordering within
+    your program.
+    """
+    global _reverseDimensions
+    _reverseDimensions = False
+
+# (WINDOWS ONLY) First, we make sure that the DIP.dll file is on the PATH
+import os, time
+if os.name == 'nt' and True == False:
+    _pydip_dir = os.path.join("/usr/local", "lib")
+    try:
+        os.add_dll_directory(_pydip_dir)
+    except:
+        os.environ["PATH"] += os.pathsep + _pydip_dir
+
+# Here we import classes and functions from the binary and the python-code modules into
+# the same namespace.
+try:
+    from .PyDIP_bin import *
+except:
+    if os.name == 'nt' and True == True:
+        print("Could not load PyDIP binary extension. Did you install the Microsoft Visual C++ Redistributable?")
+    raise
+
+__version__ = PyDIP_bin.__version__
+
+from .PyDIP_py import *
+Image.Show = Show
+Histogram.Show = HistogramShow
+SE = StructuringElement  # for backwards compatibility
+
+# Here we import PyDIPviewer if it exists
+hasDIPviewer = False
+import importlib.util
+if importlib.util.find_spec('.PyDIPviewer', __name__) is not None:
+    from . import PyDIPviewer as viewer
+    hasDIPviewer = True
+
+    def _ShowModal(*args, **kwargs):
+        """Show an image in a new SliceViewer window, blocking until it is closed.
+
+           See diplib.viewer.Show for help on parameters."""
+        viewer.Show(*args, **kwargs)
+        viewer.Spin()
+    viewer.ShowModal = _ShowModal
+
+    _ShowViewer = viewer.Show
+    def _ShowSlice(*args, **kwargs):
+        """Show an image in a new SliceViewer window.
+        
+        Parameters
+        ----------
+        in : dip.Image
+            Image to show.
+        title : str, optional
+            Window title.
+        link : diplib.viewer.SliceViewer, optional
+            Window to link to.
+        position : tuple of int, optional
+            Window position (x and y).
+        size : tuple of int, optional
+            Window size (width and height).
+        dims : tuple of int, optional
+            Visualized dimensions: main X, main Y, left X, top Y.
+        operating_point : tuple of float, optional
+            Selected point.
+        element : int, optional
+            Selected tensor element.
+        zoom : tuple of float, optional
+            Zoom factor.
+        origin : tuple of int, optional
+            Pixel displayed at top left of window.
+        mapping_range : tuple of float, optional
+            Black and white levels.
+        mapping : {"unit", "angle", "8bit", "lin", "base", "log"}, optional
+            Automatic mapping range setting.
+        lut : {"original", "ternary", "grey", "sequential", "divergent", "periodic", "labels"}, optional
+            Color lookup table setting.
+
+        Returns
+        -------
+        diplib.viewer.SliceViewer
+            SliceViewer object for further interaction.
+        """
+        showargs = dict(filter(lambda elem: elem[0] == 'in' or elem[0] == 'title', kwargs.items()))
+        v = _ShowViewer(*args, **showargs)
+
+        for elem in kwargs.items():
+            if elem[0] == 'in' or elem[0] == 'title':
+                continue
+            elif elem[0] == 'position':
+                v.SetPosition(elem[1][0], elem[1][1])
+            elif elem[0] == 'size':
+                v.SetSize(elem[1][0], elem[1][1])
+            elif elem[0] == 'link':
+                v.Link(elem[1])
+            else:
+                setattr(v, elem[0], elem[1])
+
+        return v
+
+    viewer.Show = _ShowSlice
+    Image.ShowSlice = _ShowSlice
+
+    # Allow IPython users to write
+    # %gui dip 
+    # to enable interaction
+    if importlib.util.find_spec('IPython') is not None:
+        from IPython import terminal
+
+        def _inputhook(context):
+            while not context.input_is_ready():
+                viewer.Draw()
+                time.sleep(0.001)
+
+        terminal.pt_inputhooks.register('dip', _inputhook)
+
+    # Same for IPython kernels
+    if importlib.util.find_spec('ipykernel') is not None:
+        from ipykernel.eventloops import register_integration
+
+        @register_integration('dip')
+        def _loop_dip(kernel):
+            """Start a kernel with the dipviewer event loop."""
+            while not kernel.shell.exit_now:
+                if kernel.shell_stream.flush(limit=1):
+                    return
+                viewer.Draw()
+                time.sleep(0.001)
+
+# This is a version of ImageRead that we use if we fail to load PyDIPjavaio for any reason
+_reportedDIPjavaio = False
+def ImageRead(*args, **kwargs):
+    """You are using this version of dip.ImageRead() because the DIPjavaio module is
+    not available. See `dip.javaioError` for the reason it is not available.
+
+    This version of dip.ImageRead() can read ICS, TIFF, JPEG and NYP files. For other
+    formats you need DIPjavaio. You can also use the imageio package to load
+    image files.
+
+    To use the DIPjavaio module, you need:
+    1. Have a PyDIP build that includes it (if you got this from PyPI, it is included).
+    2. Have a working installation of a Java VM. Download: https://www.java.com/en/
+    3. Run `python -m diplib download_bioformats` from your shell.
+    """
+    global _reportedDIPjavaio
+    try:
+        return PyDIP_bin.ImageRead(*args, **kwargs)
+    except BaseException:
+        if not _reportedDIPjavaio:
+            print(
+"""If you were trying to read an image format supported by BioFormats, note that
+DIPjavaio is unavailable because:""")
+            print(f" - {javaioError}\n")
+            _reportedDIPjavaio = True
+        raise
+
+# Here we import PyDIPjavaio if it exists
+hasDIPjavaio = False
+if importlib.util.find_spec('.PyDIPjavaio', __name__) is not None:
+    _lib = None
+    try:
+        from . import loadjvm
+        _lib = loadjvm.load_jvm()
+        from . import PyDIPjavaio as javaio
+        # Replace the ImageRead from PyDIP_bin with the one in PyDIPjavaio, so that 'bioformats' is recognized as a "format".
+        ImageRead = javaio.ImageRead
+        hasDIPjavaio = True
+    except Exception as e:
+        javaioError = str(e)
+        if _lib:
+            javaioError += f"\nload_jvm returned '{_lib}'"
+        else:
+            javaioError += "\nlibjvm not found"
+else:
+    javaioError = "PyDIPjavaio was not included in the build of the package."
+
+# Here we display library information
+import sys
+if hasattr(sys,'ps1'):
+    print(libraryInformation.name + " -- " + libraryInformation.description)
+    print("Version " + libraryInformation.version + " (" + libraryInformation.date + ")")
+    print("For more information see " + libraryInformation.URL)
