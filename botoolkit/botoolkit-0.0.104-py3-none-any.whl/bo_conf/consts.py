@@ -1,0 +1,2 @@
+ALL = '*'
+SECTION_OPTION_DELIMITER = '__'
