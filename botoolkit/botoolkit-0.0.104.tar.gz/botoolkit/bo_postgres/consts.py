@@ -1,0 +1,6 @@
+POSTGRES_DEFAULT_PORT = '5432'
+LOCALHOST = 'localhost'
+
+TEMPLATE_1 = 'template1'
+
+WEB_BB_DB_IMAGE_BUILD_CONFIGURATION_FILE_NAME = 'base_db_image_schema.yaml'
