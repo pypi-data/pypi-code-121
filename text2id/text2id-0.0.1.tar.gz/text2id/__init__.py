@@ -1,0 +1,1 @@
+from .text2id import Text2Id
