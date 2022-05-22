@@ -1,0 +1,11 @@
+content_handler = dict()
+content_handler['document'] = 'resource/x-bb-document'
+content_handler['externallink'] = 'resource/x-bb-externallink'
+content_handler['folder'] = 'resource/x-bb-folder'
+content_handler['courselink'] = 'resource/x-bb-courselink'
+content_handler['forumlink'] = 'resource/x-bb-forumlink' # has not implemented get content for this
+content_handler['blti-link'] = 'resource/x-bb-blti-link' # has not implemented get content for this
+content_handler['file'] = 'resource/x-bb-file'
+content_handler['asmt-test-link'] = 'resource/x-bb-asmt-test-link' # has not implemented get content for this
+content_handler['assignment'] = 'resource/x-bb-assignment'
+content_handler['blankpage'] = 'resource/x-bb-blankpage'
