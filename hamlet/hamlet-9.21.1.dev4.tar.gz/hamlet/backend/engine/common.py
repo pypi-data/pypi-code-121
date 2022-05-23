@@ -1,0 +1,3 @@
+ENGINE_STATE_FILE_NAME = "engine_state.json"
+
+ENGINE_STATE_VERSION = "1.0.1"
