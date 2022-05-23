@@ -1,0 +1,99 @@
+#  telectron - Telegram MTProto API Client Library for Python
+#  Copyright (C) 2017-2021 Dan <https://github.com/delivrance>
+#
+#  This file is part of telectron.
+#
+#  telectron is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Lesser General Public License as published
+#  by the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  telectron is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public License
+#  along with telectron.  If not, see <http://www.gnu.org/licenses/>.
+
+from io import BytesIO
+
+from telectron.raw.core.primitives import Int, Long, Int128, Int256, Bool, Bytes, String, Double, Vector
+from telectron.raw.core import TLObject
+from telectron import raw
+from typing import List, Union, Any
+
+# # # # # # # # # # # # # # # # # # # # # # # #
+#               !!! WARNING !!!               #
+#          This is a generated file!          #
+# All changes made in this file will be lost! #
+# # # # # # # # # # # # # # # # # # # # # # # #
+
+
+class AcceptUrlAuth(TLObject):  # type: ignore
+    """Telegram API method.
+
+    Details:
+        - Layer: ``138``
+        - ID: ``0xb12c7125``
+
+    Parameters:
+        write_allowed (optional): ``bool``
+        peer (optional): :obj:`InputPeer <telectron.raw.base.InputPeer>`
+        msg_id (optional): ``int`` ``32-bit``
+        button_id (optional): ``int`` ``32-bit``
+        url (optional): ``str``
+
+    Returns:
+        :obj:`UrlAuthResult <telectron.raw.base.UrlAuthResult>`
+    """
+
+    __slots__: List[str] = ["write_allowed", "peer", "msg_id", "button_id", "url"]
+
+    ID = 0xb12c7125
+    QUALNAME = "functions.messages.AcceptUrlAuth"
+
+    def __init__(self, *, write_allowed: Union[None, bool] = None, peer: "raw.base.InputPeer" = None, msg_id: Union[None, int] = None, button_id: Union[None, int] = None, url: Union[None, str] = None) -> None:
+        self.write_allowed = write_allowed  # flags.0?true
+        self.peer = peer  # flags.1?InputPeer
+        self.msg_id = msg_id  # flags.1?int
+        self.button_id = button_id  # flags.1?int
+        self.url = url  # flags.2?string
+
+    @staticmethod
+    def read(b: BytesIO, *args: Any) -> "AcceptUrlAuth":
+        flags = Int.read(b)
+        
+        write_allowed = True if flags & (1 << 0) else False
+        peer = TLObject.read(b) if flags & (1 << 1) else None
+        
+        msg_id = Int.read(b) if flags & (1 << 1) else None
+        button_id = Int.read(b) if flags & (1 << 1) else None
+        url = String.read(b) if flags & (1 << 2) else None
+        return AcceptUrlAuth(write_allowed=write_allowed, peer=peer, msg_id=msg_id, button_id=button_id, url=url)
+
+    def write(self) -> bytes:
+        b = BytesIO()
+        b.write(Int(self.ID, False))
+
+        flags = 0
+        flags |= (1 << 0) if self.write_allowed else 0
+        flags |= (1 << 1) if self.peer is not None else 0
+        flags |= (1 << 1) if self.msg_id is not None else 0
+        flags |= (1 << 1) if self.button_id is not None else 0
+        flags |= (1 << 2) if self.url is not None else 0
+        b.write(Int(flags))
+        
+        if self.peer is not None:
+            b.write(self.peer.write())
+        
+        if self.msg_id is not None:
+            b.write(Int(self.msg_id))
+        
+        if self.button_id is not None:
+            b.write(Int(self.button_id))
+        
+        if self.url is not None:
+            b.write(String(self.url))
+        
+        return b.getvalue()

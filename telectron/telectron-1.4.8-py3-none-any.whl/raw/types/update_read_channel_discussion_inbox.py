@@ -1,0 +1,95 @@
+#  telectron - Telegram MTProto API Client Library for Python
+#  Copyright (C) 2017-2021 Dan <https://github.com/delivrance>
+#
+#  This file is part of telectron.
+#
+#  telectron is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Lesser General Public License as published
+#  by the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  telectron is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public License
+#  along with telectron.  If not, see <http://www.gnu.org/licenses/>.
+
+from io import BytesIO
+
+from telectron.raw.core.primitives import Int, Long, Int128, Int256, Bool, Bytes, String, Double, Vector
+from telectron.raw.core import TLObject
+from telectron import raw
+from typing import List, Union, Any
+
+# # # # # # # # # # # # # # # # # # # # # # # #
+#               !!! WARNING !!!               #
+#          This is a generated file!          #
+# All changes made in this file will be lost! #
+# # # # # # # # # # # # # # # # # # # # # # # #
+
+
+class UpdateReadChannelDiscussionInbox(TLObject):  # type: ignore
+    """This object is a constructor of the base type :obj:`~telectron.raw.base.Update`.
+
+    Details:
+        - Layer: ``138``
+        - ID: ``0xd6b19546``
+
+    Parameters:
+        channel_id: ``int`` ``64-bit``
+        top_msg_id: ``int`` ``32-bit``
+        read_max_id: ``int`` ``32-bit``
+        broadcast_id (optional): ``int`` ``64-bit``
+        broadcast_post (optional): ``int`` ``32-bit``
+    """
+
+    __slots__: List[str] = ["channel_id", "top_msg_id", "read_max_id", "broadcast_id", "broadcast_post"]
+
+    ID = 0xd6b19546
+    QUALNAME = "types.UpdateReadChannelDiscussionInbox"
+
+    def __init__(self, *, channel_id: int, top_msg_id: int, read_max_id: int, broadcast_id: Union[None, int] = None, broadcast_post: Union[None, int] = None) -> None:
+        self.channel_id = channel_id  # long
+        self.top_msg_id = top_msg_id  # int
+        self.read_max_id = read_max_id  # int
+        self.broadcast_id = broadcast_id  # flags.0?long
+        self.broadcast_post = broadcast_post  # flags.0?int
+
+    @staticmethod
+    def read(b: BytesIO, *args: Any) -> "UpdateReadChannelDiscussionInbox":
+        flags = Int.read(b)
+        
+        channel_id = Long.read(b)
+        
+        top_msg_id = Int.read(b)
+        
+        read_max_id = Int.read(b)
+        
+        broadcast_id = Long.read(b) if flags & (1 << 0) else None
+        broadcast_post = Int.read(b) if flags & (1 << 0) else None
+        return UpdateReadChannelDiscussionInbox(channel_id=channel_id, top_msg_id=top_msg_id, read_max_id=read_max_id, broadcast_id=broadcast_id, broadcast_post=broadcast_post)
+
+    def write(self) -> bytes:
+        b = BytesIO()
+        b.write(Int(self.ID, False))
+
+        flags = 0
+        flags |= (1 << 0) if self.broadcast_id is not None else 0
+        flags |= (1 << 0) if self.broadcast_post is not None else 0
+        b.write(Int(flags))
+        
+        b.write(Long(self.channel_id))
+        
+        b.write(Int(self.top_msg_id))
+        
+        b.write(Int(self.read_max_id))
+        
+        if self.broadcast_id is not None:
+            b.write(Long(self.broadcast_id))
+        
+        if self.broadcast_post is not None:
+            b.write(Int(self.broadcast_post))
+        
+        return b.getvalue()
