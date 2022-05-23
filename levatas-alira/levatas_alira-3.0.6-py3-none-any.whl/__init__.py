@@ -1,0 +1,1 @@
+from alira.pipeline import Pipeline
