@@ -1,0 +1,2 @@
+#import uface_test_server_client.cmd
+import uface_test_server_client.inference_stub
