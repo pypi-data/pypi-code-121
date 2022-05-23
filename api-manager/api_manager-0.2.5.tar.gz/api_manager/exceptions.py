@@ -1,0 +1,2 @@
+class NotConfiguredException(Exception):
+    pass
