@@ -1,0 +1,2 @@
+from enot.visualization.latency import plot_latency_heatmap
+from enot.visualization.search import plot_probability_heatmap
