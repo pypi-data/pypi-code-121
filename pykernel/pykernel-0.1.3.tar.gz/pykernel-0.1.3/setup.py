@@ -1,0 +1,16 @@
+from setuptools import setup
+setup(
+    name="pykernel",
+    version="0.1.3",
+    description="Python & text Windows CMD Editior written with only native libaries",
+    long_description="2 Python Files With No Dependence that allow you to edit any file through keyboard or mouse. Allows you to run python files and paste/copy/cut/highlight",
+    py_modules=["pykernel","TIME"],
+    package_dir={"":"code"},
+    url="https://github.com/coolnicecool/editor",
+    license="LINCENSE.rst",
+    author="Raleigh Priour",
+    author_email="raleigh@1337maps.com"
+)
+#python setup.py build
+#python setup.py sdist bdist_wheel
+#twine upload dist/*
