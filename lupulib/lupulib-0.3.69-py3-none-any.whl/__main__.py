@@ -1,0 +1,233 @@
+""" Lupulib main() Command Line Tool for LupusecAPI """
+
+# SYS imports
+import os
+import sys
+
+# Print project system path
+ppath = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+print(ppath)
+
+# Imports from external libraries
+import argparse
+import logging
+import json
+import asyncio
+
+# Import from lupulib
+import lupulib
+import lupulib.constants as CONST
+
+
+_LOGGER = logging.getLogger('lupuseccl')
+
+def setup_logging(log_level=logging.INFO):
+    """Set up the logging."""
+    logging.basicConfig(level=log_level)
+    fmt = ("%(asctime)s %(levelname)s (%(threadName)s) "
+           "[%(name)s] %(message)s")
+    colorfmt = "%(log_color)s{}%(reset)s".format(fmt)
+    datefmt = '%Y-%m-%d %H:%M:%S'
+
+    # Suppress overly verbose logs from libraries that aren't helpful
+    logging.getLogger('requests').setLevel(logging.WARNING)
+
+    try:
+        from colorlog import ColoredFormatter
+        logging.getLogger().handlers[0].setFormatter(ColoredFormatter(
+            colorfmt,
+            datefmt=datefmt,
+            reset=True,
+            log_colors={
+                'DEBUG': 'cyan',
+                'INFO': 'green',
+                'WARNING': 'yellow',
+                'ERROR': 'red',
+                'CRITICAL': 'red',
+            }
+        ))
+    except ImportError:
+        pass
+
+    logger = logging.getLogger('')
+    logger.setLevel(log_level)
+
+def get_arguments():
+    """Get parsed arguments."""
+    parser = argparse.ArgumentParser("lupulib: Command Line Utility")
+
+    parser.add_argument(
+        '-u', '--username',
+        help='Username',
+        required=False)
+
+    parser.add_argument(
+        '-p', '--password',
+        help='Password',
+        required=False)
+
+    parser.add_argument(
+        '--arm',
+        help='Arm alarm to mode',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '-i', '--ip_address',
+        help='IP of the Lupus panel',
+        required=False)    
+
+    parser.add_argument(
+        '--disarm',
+        help='Disarm the alarm',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '--home',
+        help='Set to home mode',
+        required=False, default=False, action="store_true")
+    
+    parser.add_argument(
+        '--devices',
+        help='Output all devices',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '--history',
+        help='Get the history',
+        required=False, default=False, action="store_true")
+    
+    parser.add_argument(
+        '--status',
+        help='Get the status of the panel',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '--info',
+        help='Get basic infos of Lupusec',
+        required=False, default=False, action="store_true")        
+
+    parser.add_argument(
+        '--debug',
+        help='Enable debug logging',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '--quiet',
+        help='Output only warnings and errors',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '--setswitch',
+        help='set switch',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '--switches',
+        help='get all switches',
+        required=False, default=False, action="store_true")
+
+    parser.add_argument(
+        '--binsensors',
+        help='get all Binary Sensors',
+        required=False, default=False, action="store_true")
+
+    return parser.parse_args()
+
+def call():
+    """Execute command line helper."""
+    print("__main__.py.call()...")
+    print("Lupulib-Version: ", CONST.VERSION )
+    args = get_arguments()
+
+    if args.debug:
+        log_level = logging.DEBUG
+    elif args.quiet:
+        log_level = logging.WARN
+    else:
+        log_level = logging.INFO
+
+    setup_logging(log_level)
+
+    lupusec = None
+
+    if not args.username or not args.password or not args.ip_address:
+            raise Exception("Please supply a username, password and ip.")
+
+    def _devicePrint(dev, append=''):
+        _LOGGER.info("%s%s", dev.desc, append)
+
+    try:
+        if args.username and args.password and args.ip_address:
+            lupusec = lupulib.LupusecAPI(ip_address=args.ip_address,
+                                     username=args.username,
+                                     password=args.password)
+            print("LupusecAPI initialized: ", args.ip_address, ";", args.username, ";", args.password)
+        
+        if args.arm:
+            #if lupusec.get_alarm().set_away():
+            #    _LOGGER.info('Alarm mode changed to armed')
+            #else:
+            #    _LOGGER.warning('Failed to change alarm mode to armed')
+            _LOGGER.debug('__main.py__.call().async_set_mode()...')
+            asyncio.run(lupusec.async_set_mode(1))
+            _LOGGER.info('__main.py__.call().async_set_mode()...finished.')
+
+
+        if args.disarm:
+            if lupusec.get_alarm().set_standby():
+                _LOGGER.info('Alarm mode changed to disarmed')
+            else:
+                _LOGGER.warning('Failed to change alarm mode to disarmed')
+
+        if args.switches:
+            _LOGGER.debug('__main.py__.call().get_switch()...')
+            asyncio.run(lupusec.get_switches())
+            _LOGGER.info('__main.py__.call().get_switch()...finished.')
+
+        if args.setswitch:
+            #if lupusec.get_alarm().set_away():
+            #    _LOGGER.info('Alarm mode changed to armed')
+            #else:
+            #    _LOGGER.warning('Failed to change alarm mode to armed')
+            _LOGGER.debug('__main.py__.call().async_set_switch()...')
+            asyncio.run(lupusec.async_set_switch(20,"on"))
+            _LOGGER.info('__main.py__.call().async_set_switch()...finished.')
+
+        if args.home:
+            if lupusec.get_alarm().set_home():
+                _LOGGER.info('Alarm mode changed to home')
+            else:
+                _LOGGER.warning('Failed to change alarm mode to home')
+            
+        if args.history:
+            _LOGGER.info(json.dumps(lupusec.get_history(), indent=4, sort_keys=True))
+
+        if args.status:
+            _LOGGER.info('Mode of panel: %s', lupusec.get_alarm().mode)
+        
+        if args.devices:
+            _LOGGER.debug('__main.py__.call().async_get_devices()...')
+            asyncio.run(lupusec.get_devices())
+            _LOGGER.info('__main.py__.call().async_get_devices()...finished.')
+
+        if args.binsensors:
+            _LOGGER.debug('__main.py__.call().get_binary_sensors()...')
+            asyncio.run(lupusec.get_binary_sensors())
+            _LOGGER.info('__main.py__.call().get_binary_sensors()...finished.')
+
+        if args.info:
+            _LOGGER.debug('__main.py__.call().async_get_system()...')
+            asyncio.run(lupusec.async_get_system())
+            _LOGGER.info('__main.py__.call().async_get_system()...finished.')
+                
+    except Exception as exc:
+        _LOGGER.error(exc)
+    finally:
+        _LOGGER.info('--Finished running--')
+
+def main():
+    """Execute from command line."""
+    call()
+
+if __name__ == '__main__':
+    main()
