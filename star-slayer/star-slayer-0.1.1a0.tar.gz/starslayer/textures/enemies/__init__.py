@@ -1,0 +1,3 @@
+"""
+Enemies Textures Package.
+"""

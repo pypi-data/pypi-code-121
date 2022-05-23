@@ -1,0 +1,4 @@
+"""
+Predefined Sprites Package.
+"""
+
