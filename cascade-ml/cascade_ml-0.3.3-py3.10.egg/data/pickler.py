@@ -1,0 +1,55 @@
+"""
+Copyright 2022 Ilia Moiseev
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+import os
+import pickle
+from . import Modifier
+
+
+class Pickler(Modifier):
+    """
+    Pickles an input dataset or unpickles one
+    """
+    def __init__(self, path, dataset=None) -> None:
+        """
+        Loads pickled dataset or dumps one depending on parameters passed
+
+        If only path is passed - loads dataset from path provided if path exists
+        if path provided with a dataset dumps dataset to the path
+
+        Parameters
+        ----------
+        path:
+            path to the pickled dataset
+        dataset: Dataset, optional
+            a dataset to be pickled
+        """
+        super().__init__(dataset)
+        self.path = path
+
+        if self._dataset is None:
+            assert os.path.exists(self.path)
+            self._load()
+        else:
+            self._dump()
+
+    def _dump(self) -> None:
+        with open(self.path, 'wb') as f:
+            pickle.dump(self._dataset, f)
+
+    def _load(self) -> None:
+        with open(self.path, 'rb') as f:
+            self._dataset = pickle.load(f)
