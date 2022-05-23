@@ -1,0 +1,1 @@
+from kolibri.preprocess.text.language_detection.lang_detect import detect_language

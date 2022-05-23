@@ -1,0 +1,5 @@
+from kolibri.task.timeseries.analysis.feature_relevance.relevance import ModelRelevanceTable
+from kolibri.task.timeseries.analysis.feature_relevance.relevance import RelevanceTable
+from kolibri.task.timeseries.analysis.feature_relevance.relevance import StatisticsRelevanceTable
+from kolibri.task.timeseries.analysis.feature_relevance.relevance_table import get_model_relevance_table
+from kolibri.task.timeseries.analysis.feature_relevance.relevance_table import get_statistics_relevance_table

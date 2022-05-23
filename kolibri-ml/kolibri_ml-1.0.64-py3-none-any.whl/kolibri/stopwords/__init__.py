@@ -1,0 +1,1 @@
+from kolibri.stopwords.stp_wrd import get_stop_words
