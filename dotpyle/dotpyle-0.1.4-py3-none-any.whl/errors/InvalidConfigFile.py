@@ -1,0 +1,2 @@
+class InvalidConfigFileError(Exception):
+    pass
