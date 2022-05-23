@@ -1,0 +1,2 @@
+from qblox_instruments.cfg_man.main import ConfigurationManager
+from qblox_instruments.cfg_man.probe import get_device_info
