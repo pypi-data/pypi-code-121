@@ -1,0 +1,6 @@
+class ArgusAPIClientException(Exception):
+    ...
+
+
+class ArgusAPIAuthenticationError(ArgusAPIClientException):
+    ...
