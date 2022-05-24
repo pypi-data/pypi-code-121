@@ -1,0 +1,1 @@
+from .pypost import get_data,post_data
