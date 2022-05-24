@@ -1,0 +1,21 @@
+from typing import TYPE_CHECKING
+
+from . import AbstractBeaconSendingState
+
+if TYPE_CHECKING:
+    from ...core.beacon_sender import BeaconSendingContext
+
+
+class BeaconSendingTerminalState(AbstractBeaconSendingState):
+    def __init__(self):
+        super().__init__()
+        self.terminal = True
+
+    def do_execute(self, context: "BeaconSendingContext"):
+        context.shutdown_requested = True
+
+    def get_shutdown_state(self):
+        return self
+
+    def __repr__(self):
+        return "Terminal"
