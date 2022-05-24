@@ -1,0 +1,2 @@
+from spaceone.plugin.connector.repository_connector import RepositoryConnector
+from spaceone.plugin.connector.identity_connector import IdentityConnector
