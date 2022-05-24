@@ -1,0 +1,4 @@
+from apeman.model.modelInstanceTaskLaunchType_pb2 import ModelInstanceTaskLaunchType
+from apeman.model.modelInstanceTaskStatus_pb2 import ModelInstanceTaskStatus
+from apeman.model.modelInstanceTaskType_pb2 import ModelInstanceTaskType
+from apeman.model.modelInstanceTaskDto_pb2 import ModelInstanceTaskDTO
