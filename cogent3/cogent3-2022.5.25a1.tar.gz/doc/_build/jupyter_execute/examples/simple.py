@@ -1,0 +1,23 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
+import set_working_directory
+
+
+# In[2]:
+
+
+from cogent3.evolve.models import get_model
+from cogent3 import load_aligned_seqs, make_tree
+
+model = get_model("HKY85")
+aln = load_aligned_seqs("data/primate_cdx2_promoter.fasta")
+tree = make_tree(tip_names=aln.names)
+lf = model.make_likelihood_function(tree)
+lf.set_alignment(aln)
+lf.optimise(show_progress=False)
+lf
+
