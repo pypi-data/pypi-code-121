@@ -1,0 +1,415 @@
+from collections import OrderedDict
+from pathlib import Path
+import shlex
+import sys
+from typing import Dict, Optional
+
+import click
+import yaspin
+
+from grid import Run, Resources, ScratchSpace
+from grid.cli import rich_click
+from grid.cli.cli.utilities import verify_entrypoint_script
+import grid.sdk.env as env
+from grid.sdk.rest.exceptions import GridException
+from grid.sdk.datastores import fetch_datastore
+from grid.sdk.utils.name_generator import unique_name
+
+
+def _check_run_name_is_valid(_ctx, _param, value):
+    """Click callback that checks if a Run contains reserved names."""
+    if value is not None:
+        fail = False
+
+        #  Check if the input is alphanumeric.
+        _run_name = value.replace('-', '')
+        if not _run_name.isalnum():
+            fail = True
+
+        #  Check if the allowed `-` character is not used
+        #  at the end of the string.
+        elif value.endswith('-') or value.startswith('-'):
+            fail = True
+
+        #  Check that the run name does not contain any
+        #  uppercase characters.
+        elif any(x.isupper() for x in value):
+            fail = True
+
+        if fail:
+            raise click.BadParameter(
+                f"""
+
+            Invalid Run name: {value} the Run name must be lower case
+            alphanumeric characters or '-', start with an alphabetic
+            character, and end with an alphanumeric character (e.g. 'my-name',
+            or 'abc-123').
+
+                """
+            )
+
+    return value
+
+
+def _check_ignore_warnings_flag(ctx, _param, value):
+    """
+    Click callback that assigns the value of the ignore warnings callback
+    to a global variable.
+    """
+    if value is not None:
+        env.IGNORE_WARNINGS = value
+    return value
+
+
+def _aws_node_to_nickname():
+    aws_node_to_nicknames = OrderedDict({
+        # AWS
+        'p3.16xlarge': '8_v100_16gb',
+        'p3dn.24xlarge': '8_v100_32gb',
+        'g4dn.metal': '8_t4_16gb',
+        'p2.8xlarge': '8_k80_12gb',
+        'p3.8xlarge': '4_v100_16gb',
+        'g4dn.12xlarge': '4_t4_16gb',
+        'g3.16xlarge': '4_m60_8gb',
+        'g3.8xlarge': '2_m60_8gb',
+        'p3.2xlarge': '1_v100_16gb',
+        # 'p4d.24xlarge': '8_a100_40gb',  # currently not supported
+        'g4dn.8xlarge': '1_t4_16gb',
+        'g4dn.4xlarge': '1_t4_16gb',
+        'g4dn.2xlarge': '1_t4_16gb',
+        'g4dn.xlarge': '1_t4_16gb',
+        'g4dn.16xlarge': '1_t4_16gb',
+        'p2.xlarge': '1_k80_12gb',
+        'g3s.xlarge': '1_m60_8gb',
+        'g3.4xlarge': '1_m60_8gb',
+        'm5a.large': '2_cpu_8gb',
+        't2.large': '2_cpu_8gb',
+        't2.medium': '2_cpu_4gb'
+    })
+    return aws_node_to_nicknames
+
+
+def _nickname_to_aws_nodes():
+    aws_node_to_nickname = _aws_node_to_nickname()
+    aws_nickname_to_node = {v: k for k, v in aws_node_to_nickname.items()}
+    return aws_nickname_to_node
+
+
+def _resolve_instance_type_nickname(ctx, _param, value):
+    """
+    Enables instance type shortcuts like:
+    2_cpu_4gb for t2.large
+    """
+    nickname = value.lower()
+
+    aws_nickname_to_node = _nickname_to_aws_nodes()
+
+    # validate potential options for the node name
+    possible_values = list(aws_nickname_to_node.keys()) + list(aws_nickname_to_node.values())
+    if nickname not in possible_values:
+        possible_options = '\n'.join(list(aws_nickname_to_node.keys()))
+        click.BadParameter(f'{nickname} is not an available instance_type\n try one of these:\n{possible_options}')
+
+    instance_type = nickname
+
+    # if the value has _ then it's a nickname
+    if '_' in nickname:
+        instance_type = aws_nickname_to_node[nickname]
+    return instance_type
+
+
+def _get_instance_types(ctx, args, incomplete):
+    # TODO: these should be retrieved from backend
+    return list(_aws_node_to_nickname().keys())
+
+
+def _run_command_builder(ctx, _param, value):
+    # Captures invocation command exactly as it was
+    # typed in the terminal. pipe.quote maintains original
+    # quotation used in the CLI. We'll replace absolute
+    # grid executable path with the `grid` alias.
+    script = value[0]
+    verify_entrypoint_script(script)
+    sys.argv[0] = "grid"
+    invocation_command = " ".join(map(shlex.quote, sys.argv))
+    _, script_args = invocation_command.split(script)
+    return f"{script} {script_args}"
+
+
+@rich_click.command(context_settings=dict(ignore_unknown_options=True))
+@click.option('--config', 'config', type=Path, required=False, help='Path to Grid config YML.')
+@click.option('--name', 'name', type=str, required=False, help='Name for this run', callback=_check_run_name_is_valid)
+@click.option('--cluster', 'cluster', type=str, default=env.CONTEXT, required=False)
+@click.option(
+    '--strategy',
+    'strategy',
+    type=click.Choice(['grid_search', 'random_search', 'none'], case_sensitive=False),
+    required=False,
+    default="grid_search",
+    help="""Hyper-parameter search strategy\b
+
+Available options:
+ - grid_search (creates invocations for each combinations or evaluated arguments)
+ - random_search (creates random_search conbination of parameters - you can add num_trials for defining exact number of them)
+ - none (script arguments will not be evaluated at all and passed directly to the script)
+"""
+)
+@click.option(
+    '--num_trials',
+    'num_trials',
+    type=str,
+    required=False,
+    help='Number of samples from full search space that are used by the random_search strategy'
+)
+@click.option(
+    '--seed',
+    'seed',
+    type=str,
+    required=False,
+    help='Seed value for the `random_search` strategy',
+)
+@click.option(
+    '--instance_type',
+    'instance_type',
+    type=str,
+    default='m5a.large',
+    help='Instance type to start training session in',
+    callback=_resolve_instance_type_nickname
+)
+@click.option('--gpus', 'gpus', type=int, required=False, default=0, help='Number of GPUs to allocate per experiment')
+@click.option('--cpus', 'cpus', type=int, required=False, default=1, help='Number of CPUs to allocate per experiment')
+@click.option('--memory', 'memory', type=str, default="100", required=False, help='How much memory an experiment needs')
+@click.option(
+    '--datastore_name', 'datastore_name', type=str, required=False, help='Datastore name to be mounted in training'
+)
+@click.option(
+    '--datastore_version',
+    'datastore_version',
+    type=int,
+    required=False,
+    help='Datastore version to be mounted in training'
+)
+@click.option(
+    '--datastore_mount_dir',
+    'datastore_mount_dir',
+    type=str,
+    required=False,
+    help='Directory to mount Datastore in training job. The default datastore mount location is /datastores'
+)
+@click.option(
+    '--framework',
+    'framework',
+    required=False,
+    default='lightning',
+    help=
+    "Framework to use in training. Select from available options: `lightning`, `torch`, `tensorflow`, `julia (will select the latest available version)`, `julia:1.6.1`, `julia:1.6.2`, `julia:1.6.3`, `julia:1.6.4`, `julia:1.6.5`, `julia:1.7.0`, `julia:1.7.1`, `torchelastic`",  # noqa
+)
+@click.option(
+    '--use_spot',
+    'use_spot',
+    is_flag=True,
+    required=False,
+    help='Use spot instance. The spot instances, or preemptive instance can be shut down at will'
+)
+@click.option(
+    '--ignore_warnings',
+    is_flag=True,
+    required=False,
+    help='If we should ignore warning when executing commands',
+    callback=_check_ignore_warnings_flag
+)
+@click.option(
+    '--scratch_size',
+    type=int,
+    default=100,
+    required=False,
+    help='The size in GB of the scratch space attached to the experiment'
+)
+@click.option(
+    '--scratch_mount_path',
+    type=str,
+    required=False,
+    help='The mount path to mount the scratch space',
+    default='/tmp/scratch',
+)
+@click.option(
+    '-l',
+    '--localdir',
+    is_flag=True,
+    required=False,
+    help="""Upload source code from the local directory instead of having Grid clone the repo from GitHub (default).
+This option is particularly useful for users that do not host their source code on GitHub.
+"""
+)
+@click.option('-d', '--dockerfile', type=str, required=False, help="Dockerfile for the image building")
+@click.option(
+    '--dependency_file',
+    type=str,
+    required=False,
+    help="""Dependency file path. \b
+
+If not provided and a `requirements.txt`, `environment.yml`, or `Project.toml`
+file is present in the current-working-directory, then we will automatically
+install dependencies from according to the inferred file."""
+)
+@click.option(
+    '--auto_resume',
+    'auto_resume',
+    is_flag=True,
+    required=False,
+    help="""Mark this run as auto-resumable. \b
+
+If underlying node/instance/VM is terminated, the experiment will be
+automatically resumed, with all artifacts restores from the last
+known state. The experiment code will receive SIGTERM signal and it
+must exit with status code 0 upon properly dumping its state to disk.
+"""
+)
+@rich_click.argument(
+    'run_command', nargs=-1, callback=_run_command_builder, help='Arguments to be passed to the script.'
+)
+def run(
+    run_command: str,
+    config: Optional[Dict],
+    name: Optional[str],
+    cluster: Optional[str],
+    strategy: Optional[str],
+    num_trials: Optional[int],
+    seed: Optional[str],
+    instance_type: str,
+    gpus: Optional[int],
+    ignore_warnings: bool,
+    memory: Optional[str],
+    cpus: Optional[int],
+    datastore_name: Optional[str],
+    datastore_version: Optional[int],
+    datastore_mount_dir: Optional[str],
+    framework: Optional[str],
+    use_spot: Optional[bool],
+    scratch_size: Optional[int],
+    scratch_mount_path: Optional[str],
+    localdir: Optional[bool],
+    dockerfile: Optional[str],
+    dependency_file: Optional[str],
+    auto_resume: Optional[bool] = None,
+) -> None:
+    """Launch a Run from some SCRIPT with the provided SCRIPT_ARGS.
+
+    A run is a collection of experiments which run with a single set of SCRIPT_ARGS. The
+    SCRIPT_ARGS passed to the run command can represent fixed values, or a set of values
+    to be searched over for each option. If a set of values are passed, a sweep (grid-search
+    or random-search) will be performed, launching the desired number of experiments in
+    parallel - each with a unique set of input arguments.
+
+    The script runs on the specified instance type and Grid collects the generated
+    artifacts, metrics, and logs; making them available for you to view in real time
+    (or later if so desired) on either our Web UI or via this CLI.
+    """
+
+    # Setting this to the global variable so downstream tasks can pick it up easily
+    if ignore_warnings:
+        env.IGNORE_WARNINGS = ignore_warnings
+    validate_xpus(instance_type=instance_type, xpu=gpus or cpus)
+
+    if env.DEBUG:
+        click.echo(f"Run command: {run_command}")
+        click.echo(f"Hyperparams Search Strategy: {strategy}")
+        click.echo(f"GPUs Requested: {gpus}")
+        click.echo(f"Spot Requested: {use_spot}")
+
+    # make a fun random name when user does not pass in a name
+    if name is None:
+        name = unique_name()
+
+    dstore = None
+    if datastore_name:
+        dstore = fetch_datastore(datastore_name, datastore_version, cluster)
+
+    # these values will be overwritten by values in the config file if they exist
+    resources = Resources(instance_type=instance_type, gpus=gpus, cpus=cpus, storage_gb=int(memory), use_spot=use_spot)
+    scratch = ScratchSpace(size_gb=scratch_size, mount_path=scratch_mount_path)
+
+    # starting the spinner
+    spinner = yaspin.yaspin(text=f"Submitting Run {name} ...", color="yellow")
+    spinner.start()
+    try:
+        run_obj = Run(
+            name=name,
+            run_command=run_command,
+            strategy=strategy,
+            strategy_options={} if strategy != 'random_search' else {
+                'num_trials': num_trials or '',
+                'seed': seed or '0',
+            },
+            framework=framework,
+            dependency_file=dependency_file,
+            localdir=localdir,
+            dockerfile=dockerfile,
+            auto_resume=auto_resume,
+            resources=resources,
+            datastore=dstore,
+            datastore_mount_dir=datastore_mount_dir,
+            scratch=scratch,
+            cluster_id=cluster,
+            config_file=config,
+        )
+
+        # when starting a localdir run, the local directory is uploaded to s3.
+        # The upload bar and the spinner interfere, causing lots of noise
+        if localdir:
+            spinner.stop()
+
+        if run_obj._is_created:
+            raise click.ClickException(
+                f"A Run with the name {name} already exists. Please specify a unique name and try submitting your run again. "
+            )
+
+        run_obj.start()
+    except GridException as e:
+        spinner.fail("✘")
+        raise click.ClickException(str(e))
+    finally:
+        # stopping the spinner
+        spinner.stop()
+
+    if run_obj.exists:
+        datastore_name = run_obj.datastore.name if run_obj.datastore else "None"
+        datastore_version = run_obj.datastore.version if run_obj.datastore else "None"
+        datastore_mount_dir = run_obj.datastore_mount_dir if run_obj.datastore_mount_dir else "None"
+        message = f"""
+                    Run submitted!
+                    `grid status` to list all runs
+                    `grid status {run_obj.name}` to see all experiments for this run
+
+                    ----------------------
+                    Submission summary
+                    ----------------------
+                    name:                    {run_obj.name}
+                    run_command:             {run_obj.run_command}
+                    instance_type:           {run_obj.resources.instance_type}
+                    use_spot:                {run_obj.resources.use_spot}
+                    cluster:                 {run_obj.cluster_id}
+                    datastore_name:          {datastore_name}
+                    datastore_version:       {datastore_version}
+                    datastore_mount_dir:     {datastore_mount_dir}
+                    """
+        click.echo(message)
+    else:
+        click.echo(f"Run {name} failed to submit")
+
+
+def validate_xpus(instance_type: str, xpu: int) -> None:
+    if not instance_type:
+        return
+
+    aws_machine_name = _aws_node_to_nickname().get(instance_type, None)
+    if not aws_machine_name:
+        return
+
+    machine_xpus = aws_machine_name.split('_')[0]
+    assert machine_xpus.isdigit(), "aws machine names formatting is not correct, it should be <xpu-count>_name_<memory>"
+
+    if xpu and int(machine_xpus) < xpu:
+        raise click.exceptions.ClickException(
+            f"You have specified {xpu} GPUs (or CPUs) which is more than available on your selected instance type.\nPlease specify up to {int(machine_xpus)} GPUs and try again."
+        )
