@@ -1,0 +1,6 @@
+from spaceone.inventory.connector.identity_connector import IdentityConnector
+from spaceone.inventory.connector.plugin_connector import PluginConnector
+from spaceone.inventory.connector.secret_connector import SecretConnector
+from spaceone.inventory.connector.collector_connector import CollectorPluginConnector
+from spaceone.inventory.connector.repository_connector import RepositoryConnector
+from spaceone.inventory.connector.config_connector import ConfigConnector
