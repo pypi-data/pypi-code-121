@@ -1,0 +1,6 @@
+class RepositoryNotFoundError(Exception):
+    ...
+
+
+class CommitMessageOutOfPatternException(Exception):
+    ...
