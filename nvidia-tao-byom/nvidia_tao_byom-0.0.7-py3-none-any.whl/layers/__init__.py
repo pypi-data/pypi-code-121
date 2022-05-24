@@ -1,0 +1,2 @@
+# Copyright (c) 2017-2022, NVIDIA CORPORATION.  All rights reserved.
+"""Conversion of individual ONNX operators to corresponding Keras Layer."""
