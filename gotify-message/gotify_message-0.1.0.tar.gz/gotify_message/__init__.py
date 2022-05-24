@@ -1,0 +1,1 @@
+from .gotify_notification import GotifyNotification
