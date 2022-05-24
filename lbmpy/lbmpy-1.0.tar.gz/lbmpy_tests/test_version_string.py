@@ -1,0 +1,11 @@
+import lbmpy
+
+
+def test_version_string():
+    version = lbmpy.__version__
+    print(version)
+
+    numeric_version = [int(x, 10) for x in version.split('.')[0:2]]
+    test_version = sum(x * (100 ** i) for i, x in enumerate(numeric_version))
+
+    assert test_version >= 200
