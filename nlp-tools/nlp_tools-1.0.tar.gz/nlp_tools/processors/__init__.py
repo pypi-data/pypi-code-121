@@ -1,0 +1,3 @@
+from nlp_tools.processors.class_processor import ClassificationProcessor
+from nlp_tools.processors.sequence_processor import SequenceProcessor
+from nlp_tools.processors.dialogue_sequence_processor import DialogueSequenceProcessor
