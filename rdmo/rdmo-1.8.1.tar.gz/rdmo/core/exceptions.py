@@ -1,0 +1,2 @@
+class RDMOException(Exception):
+    pass
