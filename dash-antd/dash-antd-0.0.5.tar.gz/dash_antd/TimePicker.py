@@ -1,0 +1,87 @@
+# AUTO GENERATED FILE - DO NOT EDIT
+
+from dash.development.base_component import Component, _explicitize_args
+
+
+class TimePicker(Component):
+    """A TimePicker component.
+Select Date or DateTime
+
+Keyword arguments:
+
+- id (string; optional):
+    Unique ID to identify this component in Dash callbacks.
+
+- allow_clear (boolean; optional):
+    If allow to remove input content with clear icon.
+
+- bordered (boolean; optional):
+    Whether has border style.
+
+- class_name (string; optional):
+    Often used with CSS to style elements with common properties.
+
+- disabled (boolean; optional):
+    Disables all checkboxes within the group.
+
+- format (string; optional):
+    Time format - e.g. HH:mm:ss.
+
+- hour_step (number; optional):
+    Interval between hours in picker.
+
+- key (string; optional):
+    A unique identifier for the component, used to improve performance
+    by React.js while rendering components See
+    https://reactjs.org/docs/lists-and-keys.html for more info.
+
+- minute_step (number; optional):
+    Interval between minutes in picker.
+
+- open (boolean; optional):
+    The open state of picker.
+
+- picker (a value equal to: 'date', 'week', 'month', 'quarter', 'year'; optional):
+    Set picker type.
+
+- placeholder (string; optional):
+    The placeholder of date input.
+
+- placement (a value equal to: 'bottomLeft', 'bottomRight', 'topLeft', 'topRight'; optional):
+    The position where the selection box pops up.
+
+- second_step (number; optional):
+    Interval between seconds in picker.
+
+- show_now (boolean; optional):
+    Whether to show 'Now' button on panel when show_time is set.
+
+- size (a value equal to: 'large', 'middle', 'small'; optional):
+    To determine the size of the input box, the height of large and
+    small, are 40px and 24px respectively, while default size is 32px.
+
+- status (a value equal to: 'error', 'warning'; optional):
+    Set validation status.
+
+- style (dict; optional):
+    Defines CSS styles which will override styles previously set.
+
+- value (string; optional):
+    The selected time."""
+    @_explicitize_args
+    def __init__(self, allow_clear=Component.UNDEFINED, bordered=Component.UNDEFINED, disabled=Component.UNDEFINED, format=Component.UNDEFINED, hour_step=Component.UNDEFINED, minute_step=Component.UNDEFINED, open=Component.UNDEFINED, picker=Component.UNDEFINED, placeholder=Component.UNDEFINED, placement=Component.UNDEFINED, second_step=Component.UNDEFINED, show_now=Component.UNDEFINED, size=Component.UNDEFINED, status=Component.UNDEFINED, value=Component.UNDEFINED, id=Component.UNDEFINED, key=Component.UNDEFINED, style=Component.UNDEFINED, class_name=Component.UNDEFINED, **kwargs):
+        self._prop_names = ['id', 'allow_clear', 'bordered', 'class_name', 'disabled', 'format', 'hour_step', 'key', 'minute_step', 'open', 'picker', 'placeholder', 'placement', 'second_step', 'show_now', 'size', 'status', 'style', 'value']
+        self._type = 'TimePicker'
+        self._namespace = 'dash_antd'
+        self._valid_wildcard_attributes =            []
+        self.available_properties = ['id', 'allow_clear', 'bordered', 'class_name', 'disabled', 'format', 'hour_step', 'key', 'minute_step', 'open', 'picker', 'placeholder', 'placement', 'second_step', 'show_now', 'size', 'status', 'style', 'value']
+        self.available_wildcard_properties =            []
+        _explicit_args = kwargs.pop('_explicit_args')
+        _locals = locals()
+        _locals.update(kwargs)  # For wildcard attrs and excess named props
+        args = {k: _locals[k] for k in _explicit_args if k != 'children'}
+        for k in []:
+            if k not in args:
+                raise TypeError(
+                    'Required argument `' + k + '` was not specified.')
+        super(TimePicker, self).__init__(**args)
