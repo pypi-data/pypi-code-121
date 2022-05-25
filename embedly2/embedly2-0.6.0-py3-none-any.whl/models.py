@@ -1,0 +1,18 @@
+
+from collections import UserDict
+
+
+class Url(UserDict):
+    """
+    A dictionary with two additional attributes for the method and url.
+    UserDict provides a dictionary interface along with the regular
+    dictionary accsesible via the `data` attribute.
+
+    """
+    def __init__(self, data=None, method=None, original_url=None, **kwargs):
+        super().__init__(data, **kwargs)
+        self.method = method or 'url'
+        self.original_url = original_url
+
+    def __str__(self):
+        return '<%s %s>' % (self.method.title(), self.original_url or "")
