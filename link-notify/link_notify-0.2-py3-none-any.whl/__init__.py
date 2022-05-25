@@ -1,0 +1,1 @@
+from link_notify import notify
