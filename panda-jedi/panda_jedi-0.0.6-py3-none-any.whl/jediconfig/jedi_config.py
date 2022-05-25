@@ -1,0 +1,58 @@
+import os
+import re
+import sys
+import json
+
+from six import iteritems
+
+from liveconfigparser.LiveConfigParser import LiveConfigParser
+
+# get ConfigParser
+tmpConf = LiveConfigParser()
+
+# read
+tmpConf.read('panda_jedi.cfg')
+
+# dummy section class
+class _SectionClass:
+    pass
+
+# load configmap
+config_map_data = {}
+if 'PANDA_HOME' in os.environ:
+    config_map_name = 'panda_jedi_configmap.json'
+    config_map_path = os.path.join(os.environ['PANDA_HOME'], 'etc/configmap', config_map_name)
+    if os.path.exists(config_map_path):
+        with open(config_map_path) as f:
+            config_map_data = json.load(f)
+
+# loop over all sections
+for tmpSection in tmpConf.sections():
+    # read section
+    tmpDict = getattr(tmpConf, tmpSection)
+    # load configmap
+    if tmpSection in config_map_data:
+        tmpDict.update(config_map_data[tmpSection])
+    # make section class
+    tmpSelf = _SectionClass()
+    # update module dict
+    sys.modules[ __name__ ].__dict__[tmpSection] = tmpSelf
+    # expand all values
+    for tmpKey,tmpVal in iteritems(tmpDict):
+        # convert string to bool/int
+        if tmpVal == 'True':
+            tmpVal = True
+        elif tmpVal == 'False':
+            tmpVal = False
+        elif tmpVal == 'None':
+            tmpVal = None
+        elif isinstance(tmpVal, str) and re.match('^\d+$',tmpVal):
+            tmpVal = int(tmpVal)
+        # update dict
+        setattr(tmpSelf,tmpKey,tmpVal)
+    # database info via env
+    if tmpSection == 'db':
+        if 'PANDA_DB_HOST' in os.environ:
+            tmpSelf.dbhost = os.environ['PANDA_DB_HOST']
+        if 'PANDA_DB_PASSWORD' in os.environ:
+            tmpSelf.dbpasswd = os.environ['PANDA_DB_PASSWORD']
