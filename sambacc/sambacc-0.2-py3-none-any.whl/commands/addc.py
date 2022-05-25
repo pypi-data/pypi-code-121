@@ -1,0 +1,168 @@
+#
+# sambacc: a samba container configuration tool
+# Copyright (C) 2021  John Mulligan
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>
+#
+
+import logging
+import os
+import shutil
+
+from sambacc import addc
+from sambacc import samba_cmds
+
+from .cli import best_waiter, CommandBuilder, Context, Fail
+
+try:
+    import dns
+    import dns.resolver
+    import dns.exception
+
+    _DNS = True
+except ImportError:
+    _DNS = False
+
+
+_logger = logging.getLogger(__name__)
+
+_populated: str = "/var/lib/samba/POPULATED"
+_provisioned: str = "/etc/samba/smb.conf"
+
+dccommands = CommandBuilder()
+
+
+@dccommands.command(name="summary")
+def summary(ctx: Context) -> None:
+    print("Hello", ctx)
+
+
+_setup_choices = ["init-all", "provision", "populate", "wait-domain", "join"]
+
+
+def _dosetup(ctx: Context, step_name: str) -> bool:
+    setup = ctx.cli.setup or []
+    return ("init-all" in setup) or (step_name in setup)
+
+
+def _run_container_args(parser):
+    parser.add_argument(
+        "--setup",
+        action="append",
+        choices=_setup_choices,
+        help=(
+            "Specify one or more setup step names to preconfigure the"
+            " container environment before the server process is started."
+            " The special 'init-all' name will perform all known setup steps."
+        ),
+    )
+    parser.add_argument(
+        "--name",
+        help="Specify a custom name for the dc, overriding the config file.",
+    )
+
+
+def _prep_provision(ctx: Context) -> None:
+    if os.path.exists(_provisioned):
+        _logger.info("Domain already provisioned")
+        return
+    domconfig = ctx.instance_config.domain()
+    _logger.info(f"Provisioning domain: {domconfig.realm}")
+
+    dcname = ctx.cli.name or domconfig.dcname
+    addc.provision(
+        realm=domconfig.realm,
+        domain=domconfig.short_domain,
+        dcname=dcname,
+        admin_password=domconfig.admin_password,
+    )
+
+
+def _prep_join(ctx: Context) -> None:
+    if os.path.exists(_provisioned):
+        _logger.info("Already configured. Not joining")
+        return
+    domconfig = ctx.instance_config.domain()
+    _logger.info(f"Provisioning domain: {domconfig.realm}")
+
+    dcname = ctx.cli.name or domconfig.dcname
+    addc.join(
+        realm=domconfig.realm,
+        domain=domconfig.short_domain,
+        dcname=dcname,
+        admin_password=domconfig.admin_password,
+    )
+
+
+def _prep_wait_on_domain(ctx: Context) -> None:
+    if not _DNS:
+        _logger.info("Can not query domain. Exiting.")
+        raise Fail("no dns support available (missing dnsypthon)")
+
+    realm = ctx.instance_config.domain().realm
+    waiter = best_waiter(max_timeout=30)
+    while True:
+        _logger.info(f"checking for AD domain in dns: {realm}")
+        try:
+            dns.resolver.query(f"_ldap._tcp.{realm}.", "SRV")
+            return
+        except dns.exception.DNSException:
+            _logger.info(f"dns record for {realm} not found")
+            waiter.wait()
+
+
+def _prep_populate(ctx: Context) -> None:
+    if os.path.exists(_populated):
+        _logger.info("populated marker exists")
+        return
+    _logger.info("Populating domain with default entries")
+
+    for dgroup in ctx.instance_config.domain_groups():
+        addc.create_group(dgroup.groupname)
+
+    for duser in ctx.instance_config.domain_users():
+        addc.create_user(
+            name=duser.username,
+            password=duser.plaintext_passwd,
+            surname=duser.surname,
+            given_name=duser.given_name,
+        )
+        # TODO: probably should improve this to avoid extra calls / loops
+        for gname in duser.member_of:
+            addc.add_group_members(group_name=gname, members=[duser.username])
+
+    # "touch" the populated marker
+    with open(_populated, "w"):
+        pass
+
+
+def _prep_krb5_conf(ctx: Context) -> None:
+    shutil.copy("/var/lib/samba/private/krb5.conf", "/etc/krb5.conf")
+
+
+@dccommands.command(name="run", arg_func=_run_container_args)
+def run(ctx: Context) -> None:
+    _logger.info("Running AD DC container")
+    if _dosetup(ctx, "wait-domain"):
+        _prep_wait_on_domain(ctx)
+    if _dosetup(ctx, "join"):
+        _prep_join(ctx)
+    if _dosetup(ctx, "provision"):
+        _prep_provision(ctx)
+    if _dosetup(ctx, "populate"):
+        _prep_populate(ctx)
+
+    _prep_krb5_conf(ctx)
+    _logger.info("Starting samba server")
+    samba_cmds.execute(samba_cmds.samba_dc_foreground())
