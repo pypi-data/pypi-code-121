@@ -1,0 +1,1 @@
+from .forchan import main
