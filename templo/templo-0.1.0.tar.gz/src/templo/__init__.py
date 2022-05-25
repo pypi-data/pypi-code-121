@@ -1,0 +1,1 @@
+from templo.run import template
