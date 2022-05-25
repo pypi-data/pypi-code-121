@@ -1,0 +1,1 @@
+from bettermaxtools import app
