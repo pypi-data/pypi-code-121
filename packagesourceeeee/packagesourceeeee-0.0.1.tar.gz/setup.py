@@ -1,0 +1,9 @@
+from setuptools import setup
+setup(name="packagesourceeeee",
+version="0.0.1",
+description="This is code with harry package",
+long_description = "This is a very very long description",
+author="Harry",
+packages=['packagesource'],
+install_requires=[],
+)
