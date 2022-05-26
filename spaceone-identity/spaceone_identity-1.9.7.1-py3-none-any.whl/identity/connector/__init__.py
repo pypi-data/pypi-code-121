@@ -1,0 +1,1 @@
+from spaceone.identity.connector.auth_plugin_connector import AuthPluginConnector
