@@ -1,0 +1,3 @@
+class AutomataRequirementMissingException(Exception):
+    pass
+
