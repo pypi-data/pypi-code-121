@@ -1,0 +1,436 @@
+import json
+import os
+
+import numpy as np
+from numpy import array_equal
+import pytest
+
+from pyogrio import list_layers, list_drivers
+from pyogrio.raw import DRIVERS, read, write
+from pyogrio.errors import DataSourceError, DataLayerError, FeatureError
+from pyogrio.tests.conftest import prepare_testfile
+
+
+def test_read(naturalearth_lowres):
+    meta, _, geometry, fields = read(naturalearth_lowres)
+
+    assert meta["crs"] == "EPSG:4326"
+    assert meta["geometry_type"] == "Polygon"
+    assert meta["encoding"] == "UTF-8"
+    assert meta["fields"].shape == (5,)
+
+    assert meta["fields"].tolist() == [
+        "pop_est",
+        "continent",
+        "name",
+        "iso_a3",
+        "gdp_md_est",
+    ]
+
+    assert len(fields) == 5
+    assert len(geometry) == len(fields[0])
+
+    # quick test that WKB is a Polygon type
+    assert geometry[0][:6] == b"\x01\x06\x00\x00\x00\x03"
+
+
+@pytest.mark.parametrize("ext", DRIVERS)
+def test_read_autodetect_driver(tmp_path, naturalearth_lowres, ext):
+    # Test all supported autodetect drivers
+    testfile = prepare_testfile(naturalearth_lowres, dst_dir=tmp_path, ext=ext)
+
+    assert testfile.suffix == ext
+    assert testfile.exists()
+    meta, _, geometry, fields = read(testfile)
+
+    assert meta["crs"] == "EPSG:4326"
+    assert meta["geometry_type"] in ("MultiPolygon", "Polygon", "Unknown")
+    assert meta["encoding"] == "UTF-8"
+    assert meta["fields"].shape == (5,)
+
+    assert meta["fields"].tolist() == [
+        "pop_est",
+        "continent",
+        "name",
+        "iso_a3",
+        "gdp_md_est",
+    ]
+
+    assert len(fields) == 5
+    assert len(geometry) == len(fields[0])
+
+
+def test_read_invalid_layer(naturalearth_lowres):
+    with pytest.raises(DataLayerError, match="Layer 'invalid' could not be opened"):
+        read(naturalearth_lowres, layer="invalid")
+
+    with pytest.raises(DataLayerError, match="Layer '-1' could not be opened"):
+        read(naturalearth_lowres, layer=-1)
+
+    with pytest.raises(DataLayerError, match="Layer '2' could not be opened"):
+        read(naturalearth_lowres, layer=2)
+
+
+def test_vsi_read_layers(naturalearth_lowres_vsi):
+    _, naturalearth_lowres_vsi = naturalearth_lowres_vsi
+    assert array_equal(
+        list_layers(naturalearth_lowres_vsi), [["naturalearth_lowres", "Polygon"]]
+    )
+
+    geometry = read(naturalearth_lowres_vsi)[2]
+    assert geometry.shape == (177,)
+
+
+def test_read_no_geometry(naturalearth_lowres):
+    geometry = read(naturalearth_lowres, read_geometry=False)[2]
+
+    assert geometry is None
+
+
+def test_read_columns(naturalearth_lowres):
+    # read no columns or geometry
+    meta, _, geometry, fields = read(
+        naturalearth_lowres, columns=[], read_geometry=False
+    )
+    assert geometry is None
+    assert len(fields) == 0
+    array_equal(meta["fields"], np.empty(shape=(0, 4), dtype="object"))
+
+    columns = ["NAME", "NAME_LONG"]
+    meta, _, geometry, fields = read(
+        naturalearth_lowres, columns=columns, read_geometry=False
+    )
+    array_equal(meta["fields"], columns)
+
+    # Repeats should be dropped
+    columns = ["NAME", "NAME_LONG", "NAME"]
+    meta, _, geometry, fields = read(
+        naturalearth_lowres, columns=columns, read_geometry=False
+    )
+    array_equal(meta["fields"], columns[:2])
+
+
+def test_read_skip_features(naturalearth_lowres):
+    expected_geometry, expected_fields = read(naturalearth_lowres)[2:]
+    geometry, fields = read(naturalearth_lowres, skip_features=10)[2:]
+
+    assert len(geometry) == len(expected_geometry) - 10
+    assert len(fields[0]) == len(expected_fields[0]) - 10
+
+    assert np.array_equal(geometry, expected_geometry[10:])
+    # Last field has more variable data
+    assert np.array_equal(fields[-1], expected_fields[-1][10:])
+
+
+def test_read_max_features(naturalearth_lowres):
+    expected_geometry, expected_fields = read(naturalearth_lowres)[2:]
+    geometry, fields = read(naturalearth_lowres, max_features=2)[2:]
+
+    assert len(geometry) == 2
+    assert len(fields[0]) == 2
+
+    assert np.array_equal(geometry, expected_geometry[:2])
+    assert np.array_equal(fields[-1], expected_fields[-1][:2])
+
+
+def test_read_where(naturalearth_lowres):
+    # empty filter should return full set of records
+    geometry, fields = read(naturalearth_lowres, where="")[2:]
+    assert len(geometry) == 177
+    assert len(fields) == 5
+    assert len(fields[0]) == 177
+
+    # should return singular item
+    geometry, fields = read(naturalearth_lowres, where="iso_a3 = 'CAN'")[2:]
+    assert len(geometry) == 1
+    assert len(fields) == 5
+    assert len(fields[0]) == 1
+    assert fields[3] == "CAN"
+
+    # should return items within range
+    geometry, fields = read(
+        naturalearth_lowres, where="POP_EST >= 10000000 AND POP_EST < 100000000"
+    )[2:]
+    assert len(geometry) == 75
+    assert min(fields[0]) >= 10000000
+    assert max(fields[0]) < 100000000
+
+    # should match no items
+    with pytest.warns(UserWarning, match="does not have any features to read"):
+        geometry, fields = read(naturalearth_lowres, where="iso_a3 = 'INVALID'")[2:]
+        assert len(geometry) == 0
+
+
+def test_read_where_invalid(naturalearth_lowres):
+    with pytest.raises(ValueError, match="Invalid SQL"):
+        read(naturalearth_lowres, where="invalid")
+
+
+@pytest.mark.parametrize("bbox", [(1,), (1, 2), (1, 2, 3)])
+def test_read_bbox_invalid(naturalearth_lowres, bbox):
+    with pytest.raises(ValueError, match="Invalid bbox"):
+        read(naturalearth_lowres, bbox=bbox)
+
+
+def test_read_bbox(naturalearth_lowres):
+    # should return no features
+    with pytest.warns(UserWarning, match="does not have any features to read"):
+        geometry, fields = read(naturalearth_lowres, bbox=(0, 0, 0.00001, 0.00001))[2:]
+
+    assert len(geometry) == 0
+
+    geometry, fields = read(naturalearth_lowres, bbox=(-140, 20, -100, 40))[2:]
+
+    assert len(geometry) == 2
+    assert np.array_equal(fields[3], ["USA", "MEX"])
+
+
+def test_read_fids(naturalearth_lowres):
+    expected_fids, expected_geometry, expected_fields = read(
+        naturalearth_lowres, return_fids=True
+    )[1:]
+    subset = [0, 10, 5]
+
+    for fids in [subset, np.array(subset)]:
+        index, geometry, fields = read(
+            naturalearth_lowres, fids=subset, return_fids=True
+        )[1:]
+
+        assert len(fids) == 3
+        assert len(geometry) == 3
+        assert len(fields[0]) == 3
+
+        assert np.array_equal(index, expected_fids[subset])
+        assert np.array_equal(geometry, expected_geometry[subset])
+        assert np.array_equal(fields[-1], expected_fields[-1][subset])
+
+
+def test_return_fids(naturalearth_lowres):
+
+    # default is to not return fids
+    fids = read(naturalearth_lowres)[1]
+    assert fids is None
+
+    fids = read(naturalearth_lowres, return_fids=False)[1]
+    assert fids is None
+
+    fids = read(naturalearth_lowres, return_fids=True, skip_features=2, max_features=2)[
+        1
+    ]
+    assert fids is not None
+    assert fids.dtype == np.int64
+    # Note: shapefile FIDS start at 0
+    assert np.array_equal(fids, np.array([2, 3], dtype="int64"))
+
+
+def test_read_fids_out_of_bounds(naturalearth_lowres):
+    with pytest.raises(
+        FeatureError,
+        match=r"Attempt to read shape with feature id \(-1\) out of available range",
+    ):
+        read(naturalearth_lowres, fids=[-1])
+
+    with pytest.raises(
+        FeatureError,
+        match=r"Attempt to read shape with feature id \(200\) out of available range",
+    ):
+        read(naturalearth_lowres, fids=[200])
+
+
+def test_read_fids_unsupported_keywords(naturalearth_lowres):
+    with pytest.raises(ValueError, match="cannot set both 'fids' and any of"):
+        read(naturalearth_lowres, fids=[1], where="iso_a3 = 'CAN'")
+
+    with pytest.raises(ValueError, match="cannot set both 'fids' and any of"):
+        read(naturalearth_lowres, fids=[1], bbox=(-140, 20, -100, 40))
+
+    with pytest.raises(ValueError, match="cannot set both 'fids' and any of"):
+        read(naturalearth_lowres, fids=[1], skip_features=5)
+
+    with pytest.raises(ValueError, match="cannot set both 'fids' and any of"):
+        read(naturalearth_lowres, fids=[1], max_features=5)
+
+
+def test_write(tmpdir, naturalearth_lowres):
+    meta, _, geometry, field_data = read(naturalearth_lowres)
+
+    filename = os.path.join(str(tmpdir), "test.shp")
+    write(filename, geometry, field_data, **meta)
+
+    assert os.path.exists(filename)
+    for ext in (".dbf", ".prj"):
+        assert os.path.exists(filename.replace(".shp", ext))
+
+
+def test_write_gpkg(tmpdir, naturalearth_lowres):
+    meta, _, geometry, field_data = read(naturalearth_lowres)
+
+    filename = os.path.join(str(tmpdir), "test.gpkg")
+    write(filename, geometry, field_data, driver="GPKG", **meta)
+
+    assert os.path.exists(filename)
+
+
+def test_write_geojson(tmpdir, naturalearth_lowres):
+    meta, _, geometry, field_data = read(naturalearth_lowres)
+
+    filename = os.path.join(str(tmpdir), "test.json")
+    write(filename, geometry, field_data, driver="GeoJSON", **meta)
+
+    assert os.path.exists(filename)
+
+    data = json.loads(open(filename).read())
+
+    assert data["type"] == "FeatureCollection"
+    assert data["name"] == "test"
+    assert "crs" in data
+    assert len(data["features"]) == len(geometry)
+    assert not len(
+        set(meta["fields"]).difference(data["features"][0]["properties"].keys())
+    )
+
+
+@pytest.mark.parametrize(
+    "driver",
+    [
+        driver
+        for driver in list_drivers(write=True)
+        if not driver in ("ESRI Shapefile", "GPKG", "GeoJSON")
+    ],
+)
+def test_write_supported(tmpdir, naturalearth_lowres, driver):
+    """Test drivers not specifically tested above"""
+    meta, _, geometry, field_data = read(naturalearth_lowres, columns=["iso_a3"])
+
+    # note: naturalearth_lowres contains mixed polygons / multipolygons, which
+    # are not supported in mixed form for all drivers.  To get around this here
+    # we take the first record only.
+    meta["geometry_type"] = "MultiPolygon"
+
+    filename = tmpdir / "test"
+    write(
+        filename,
+        geometry[:1],
+        field_data=[f[:1] for f in field_data],
+        driver=driver,
+        **meta,
+    )
+
+    assert filename.exists()
+
+
+def test_write_unsupported(tmpdir, naturalearth_lowres):
+    meta, _, geometry, field_data = read(naturalearth_lowres)
+
+    filename = os.path.join(str(tmpdir), "test.fgdb")
+
+    with pytest.raises(DataSourceError, match="does not support write functionality"):
+        write(filename, geometry, field_data, driver="OpenFileGDB", **meta)
+
+
+def assert_equal_result(result1, result2):
+    meta1, index1, geometry1, field_data1 = result1
+    meta2, index2, geometry2, field_data2 = result2
+
+    assert np.array_equal(meta1["fields"], meta2["fields"])
+    assert np.array_equal(index1, index2)
+    # a plain `assert np.array_equal(geometry1, geometry2)` doesn't work because
+    # the WKB values are not exactly equal, therefore parsing with pygeos to compare
+    # with tolerance
+    pygeos = pytest.importorskip("pygeos")
+    assert pygeos.equals_exact(
+        pygeos.from_wkb(geometry1), pygeos.from_wkb(geometry2), tolerance=0.00001
+    ).all()
+    assert all([np.array_equal(f1, f2) for f1, f2 in zip(field_data1, field_data2)])
+
+
+@pytest.mark.parametrize("driver,ext", [("GeoJSON", "geojson"), ("GPKG", "gpkg")])
+def test_read_from_bytes(tmpdir, naturalearth_lowres, driver, ext):
+    meta, index, geometry, field_data = read(naturalearth_lowres)
+    filename = os.path.join(str(tmpdir), f"test.{ext}")
+    write(filename, geometry, field_data, driver=driver, **meta)
+
+    with open(filename, "rb") as f:
+        buffer = f.read()
+
+    result2 = read(buffer)
+    assert_equal_result((meta, index, geometry, field_data), result2)
+
+
+def test_read_from_bytes_zipped(tmpdir, naturalearth_lowres_vsi):
+    path, vsi_path = naturalearth_lowres_vsi
+    meta, index, geometry, field_data = read(vsi_path)
+
+    with open(path, "rb") as f:
+        buffer = f.read()
+
+    result2 = read(buffer)
+    assert_equal_result((meta, index, geometry, field_data), result2)
+
+
+@pytest.mark.parametrize("driver,ext", [("GeoJSON", "geojson"), ("GPKG", "gpkg")])
+def test_read_from_file_like(tmpdir, naturalearth_lowres, driver, ext):
+    meta, index, geometry, field_data = read(naturalearth_lowres)
+    filename = os.path.join(str(tmpdir), f"test.{ext}")
+    write(filename, geometry, field_data, driver=driver, **meta)
+
+    with open(filename, "rb") as f:
+        result2 = read(f)
+
+    assert_equal_result((meta, index, geometry, field_data), result2)
+
+
+@pytest.mark.parametrize("ext", ["gpkg", "fgb"])
+def test_read_write_data_types_numeric(tmp_path, ext):
+    # Point(0, 0)
+    geometry = np.array(
+        [bytes.fromhex("010100000000000000000000000000000000000000")] * 3, dtype=object
+    )
+    field_data = [
+        np.array([True, False, True], dtype="bool"),
+        np.array([1, 2, 3], dtype="int16"),
+        np.array([1, 2, 3], dtype="int32"),
+        np.array([1, 2, 3], dtype="int64"),
+        np.array([1, 2, 3], dtype="float32"),
+        np.array([1, 2, 3], dtype="float64"),
+    ]
+    fields = ["bool", "int16", "int32", "int64", "float32", "float64"]
+    meta = dict(geometry_type="Point", crs="EPSG:4326", spatial_index=False)
+
+    filename = tmp_path / f"test.{ext}"
+    write(filename, geometry, field_data, fields, **meta)
+    result = read(filename)[3]
+    assert all([np.array_equal(f1, f2) for f1, f2 in zip(result, field_data)])
+    assert all([f1.dtype == f2.dtype for f1, f2 in zip(result, field_data)])
+
+    # other integer data types that don't roundtrip exactly
+    # these are generally promoted to a larger integer type except for uint64
+    for i, (dtype, result_dtype) in enumerate(
+        [
+            ("int8", "int16"),
+            ("uint8", "int16"),
+            ("uint16", "int32"),
+            ("uint32", "int64"),
+            ("uint64", "int64"),
+        ]
+    ):
+        field_data = [np.array([1, 2, 3], dtype=dtype)]
+        filename = tmp_path / f"test{i}.{ext}"
+        write(filename, geometry, field_data, ["col"], **meta)
+        result = read(filename)[3][0]
+        assert np.array_equal(result, np.array([1, 2, 3]))
+        assert result.dtype == result_dtype
+
+
+def test_read_data_types_numeric_with_null(test_gpkg_nulls):
+    fields = read(test_gpkg_nulls)[3]
+
+    for i, field in enumerate(fields):
+        # last value should be np.nan
+        assert np.isnan(field[-1])
+
+        # all integer fields should be cast to float64; float32 should be preserved
+        if i == 9:
+            assert field.dtype == "float32"
+        else:
+            assert field.dtype == "float64"
