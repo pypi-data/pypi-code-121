@@ -1,0 +1,2 @@
+class AuthenticatorError(Exception):
+    pass
