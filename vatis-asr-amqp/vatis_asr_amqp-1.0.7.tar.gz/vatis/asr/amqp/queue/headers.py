@@ -1,0 +1,5 @@
+NACK_COUNTER_HEADER: str = 'NackCounter'
+CORRELATION_ID_HEADER: str = 'Correlation-Id'
+REPLY_TO_HEADER: str = 'Reply-To'
+TIMEOUT_HEADER: str = 'Timeout-Sec'
+REQUEST_TIMESTAMP_HEADER: str = 'Request-Timestamp-Sec'
