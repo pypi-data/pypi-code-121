@@ -1,0 +1,58 @@
+from servicefoundry.core.deploy import _deploy, _deploy_local
+from servicefoundry.core.notebook.notebook_util import get_default_callback
+from servicefoundry.internal.clients.service_foundry_client import (
+    ServiceFoundryServiceClient,
+)
+from servicefoundry.internal.const import BUILD_DIR, SFY_DIR
+from servicefoundry.internal.io.dummy_input_hook import DummyInputHook
+from servicefoundry.internal.package.package import Package
+from servicefoundry.internal.packaged_component import PackagedComponent
+from servicefoundry.internal.template.sf_definition import SFDefinition
+from servicefoundry.internal.template.template_workflow import TemplateWorkflow
+
+TEMPLATE = "fastapi-inference"
+
+
+class Service:
+    def __init__(self, parameters):
+        self.project_folder = f"{SFY_DIR}/service"
+        tfs_client = ServiceFoundryServiceClient.get_client()
+        self.template_workflow = TemplateWorkflow(
+            f"truefoundry.com/v1/{TEMPLATE}", DummyInputHook(tfs_client, parameters)
+        )
+        self.parameters = self.template_workflow.process_parameter(
+            parameter_values=parameters
+        )
+        self.callback = get_default_callback()
+
+    def extra_files(self):
+        return self.template_workflow.template.list_dir_and_files()
+
+    def _pack(self, overwrite=False):
+        generated_def = self.template_workflow.template.generate_service_def(
+            SFDefinition(TEMPLATE, self.parameters, None)
+        )
+        _package = Package(generated_def, BUILD_DIR)
+        _package.clean(callback=self.callback)
+        _package.pre_package(callback=self.callback)
+        self.write(out_folder=BUILD_DIR, overwrite=overwrite)
+        _package.package(callback=self.callback)
+        packaged_component = PackagedComponent(
+            build_dir=_package.build_dir, service_def=_package.generated_service_def
+        )
+        return packaged_component
+
+    def deploy(self, overwrite=False):
+        packaged_component = self._pack(overwrite=overwrite)
+        return _deploy(packaged_component, callback=get_default_callback())
+
+    def deploy_local(self, overwrite=False):
+        packaged_component = self._pack(overwrite=overwrite)
+        return _deploy_local(packaged_component, callback=get_default_callback())
+
+    def write(self, out_folder="", overwrite=False):
+        self.template_workflow.write(
+            out_folder=out_folder,
+            overwrite=overwrite,
+            callback=self.callback,
+        )
