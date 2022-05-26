@@ -1,0 +1,128 @@
+"""Module for the Flask-specific rules.
+
+A sample Flask app generator would look like this.
+
+```python
+from flask import Flask
+from deescovery discover
+from deescovery.flask import get_flask_rules
+
+def app() -> Flask:
+    flask_app = Flask(__name__)
+    flask_app.config.from_object("myapp.config")
+    discovery_rules = get_flask_rules("myapp", flask_app)
+    discover("dashboards", discovery_rules)
+    return flask_app
+```
+"""
+from typing import List
+
+from deescovery import IRule
+from deescovery.discovery import ModuleRule, ObjectRule
+from deescovery.matchers import MatchByMethod, MatchByPattern, MatchByType
+
+
+def get_flask_rules(import_path: str, flask_app) -> List[IRule]:
+    """Return a list of rules useful for the Flask application.
+
+    The following rules will be returned:
+
+    - Load SQLAlchemy models (files models.py)
+    - Load Flask blueprints (files controllers.py)
+    - Load Flask CLI commands (files cli.py)
+    - Initialize services (top-level file services.py)
+
+    The service initialization step relied on the de-facto standard for
+    initializing Flask extensions: calls `obj.init_app(flask_app)`
+    for each of the objects in the top-level `services.py` file.
+
+    Args:
+        import_path: name of the top-level module of the project (like, "myproject")
+        flask_app: a Flask app instance.
+
+    Returns:
+        A list of rules, suitable to be passed to "deescovery.discover()"
+    """
+    return [
+        models_loader(import_path),
+        blueprints_loader(import_path, flask_app),
+        commands_loader(import_path, flask_app),
+        service_initializer(import_path, flask_app),
+    ]
+
+
+def models_loader(import_path):
+    """Load all models."""
+    return ModuleRule(
+        name="Flask models loader",
+        module_matches=MatchByPattern(generate_patterns(import_path, "models")),
+    )
+
+
+def blueprints_loader(import_path, flask_app):
+    """Find and import all blueprints in the application."""
+    try:
+        from flask import Blueprint
+    except ImportError:
+        raise RuntimeError("Flask is not installed.")
+    return ObjectRule(
+        name="Flask blueprints loader",
+        module_matches=MatchByPattern(generate_patterns(import_path, "controllers")),
+        object_matches=MatchByType(Blueprint),
+        object_action=flask_app.register_blueprint,
+    )
+
+
+def commands_loader(import_path, flask_app):
+    """Find all commands and register them as Flask CLI commands."""
+    try:
+        from flask.cli import AppGroup
+    except ImportError:
+        raise RuntimeError("Flask is not installed.")
+    return ObjectRule(
+        name="Flask CLI commands loader",
+        module_matches=MatchByPattern(generate_patterns(import_path, "cli")),
+        object_matches=MatchByType(AppGroup),
+        object_action=flask_app.cli.add_command,
+    )
+
+
+def service_initializer(import_path, flask_app):
+    """Find and initialize all instances of Flask applications.
+
+    Notice that the initialize scans for top-level services files, and doesn't
+    walk over all your app's domain package.
+    """
+    return ObjectRule(
+        name="Flask service initializer",
+        module_matches=MatchByPattern([f"{import_path}.services"]),
+        object_matches=MatchByMethod("init_app"),
+        object_action=lambda obj: obj.init_app(app=flask_app),
+    )
+
+
+def generate_patterns(import_path: str, module_prefix: str) -> List[str]:
+    """Generate a list of patterns to discover.
+
+    For example, gen_patterns("myapp", "models") generates patterns that make matchers
+    discover the content in the following files.
+
+        myapp/users/models.py
+        myapp/invoices/models.py
+        (etc. for all domain packages beyond "users" and "invoices")
+        ...
+
+        myapp/users/models_roles.py
+        myapp/users/models_groups.py
+        (etc. for all modules started with "models_" in all domain packages)
+        ...
+
+        myapp/users/models/roles.py
+        myapp/users/models/groups.py
+        (if you prefer nested structures)
+    """
+    return [
+        f"{import_path}.*.{module_prefix}",
+        f"{import_path}.*.{module_prefix}_*",
+        f"{import_path}.*.{module_prefix}.*",
+    ]
