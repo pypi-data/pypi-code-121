@@ -1,0 +1,303 @@
+#!/usr/bin/env python
+
+"""
+crate_anon/nlp_manager/all_processors.py
+
+===============================================================================
+
+    Copyright (C) 2015, University of Cambridge, Department of Psychiatry.
+    Created by Rudolf Cardinal (rnc1001@cam.ac.uk).
+
+    This file is part of CRATE.
+
+    CRATE is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    CRATE is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with CRATE. If not, see <https://www.gnu.org/licenses/>.
+
+===============================================================================
+
+**Factory functions to manage all NLP processor classes.**
+
+"""
+
+# I don't know why the PyCharm inspector goes haywire and thinks that a bunch
+# of these imports are unused. But that's the reason for all the
+# "noinspection PyUnresolvedReferences" comments.
+
+from inspect import isabstract
+
+# noinspection PyUnresolvedReferences
+from typing import Any, List, Optional, Set, Type
+
+from cardinal_pythonlib.json.typing_helpers import (
+    JsonArrayType,
+    JsonObjectType,
+)
+
+from crate_anon.common.stringfunc import (
+    get_docstring,
+    make_twocol_table,
+    trim_docstring,
+)
+
+# noinspection PyUnresolvedReferences
+from crate_anon.nlp_manager.base_nlp_parser import BaseNlpParser, TableMaker
+
+# noinspection PyUnresolvedReferences
+from crate_anon.nlp_manager.nlp_definition import NlpDefinition
+from crate_anon.nlp_manager.parse_gate import Gate
+from crate_anon.nlp_manager.parse_medex import Medex
+from crate_anon.nlp_manager.parse_biochemistry import *  # noqa: F403
+from crate_anon.nlp_manager.parse_clinical import *  # noqa: F403
+from crate_anon.nlp_manager.parse_cognitive import *  # noqa: F403
+from crate_anon.nlp_manager.parse_haematology import *  # noqa: F403
+
+ClassType = Type[object]
+
+
+# noinspection PyUnusedLocal
+def ignore(something: Any) -> None:
+    pass
+
+
+# To make warnings go away about imports being unused:
+
+# gate_parser
+ignore(Gate)
+
+# medex_parser
+ignore(Medex)
+
+# parse_biochemistry
+ignore(Crp)  # noqa: F405
+
+# parse_clinical
+ignore(Bmi)  # noqa: F405
+
+# parse_cognitive
+ignore(Mmse)  # noqa: F405
+
+# parse_haematology
+ignore(Wbc)  # noqa: F405
+ignore(Neutrophils)  # noqa: F405
+ignore(Lymphocytes)  # noqa: F405
+ignore(Monocytes)  # noqa: F405
+ignore(Basophils)  # noqa: F405
+ignore(Eosinophils)  # noqa: F405
+
+
+# T = TypeVar('T', bound=NlpParser)
+
+
+def get_all_subclasses(cls: ClassType) -> List[ClassType]:
+    """
+    Returns all non-abstract subclasses of ``cls``.
+
+    Args:
+        cls: class into which to recurse
+
+    Returns:
+        list of classes
+    """
+    # Type hinting, but not quite:
+    #   https://stackoverflow.com/questions/35655257
+    # Getting derived subclasses: https://stackoverflow.com/questions/3862310
+    all_subclasses = []  # List[ClassType]
+    # noinspection PyArgumentList
+    for subclass in cls.__subclasses__():
+        if not isabstract(subclass):
+            all_subclasses.append(subclass)
+        all_subclasses.extend(get_all_subclasses(subclass))  # recursive
+    all_subclasses.sort(key=lambda c: c.__name__.lower())
+    return all_subclasses
+
+
+def all_local_parser_classes() -> List[Type[BaseNlpParser]]:
+    """
+    Return all classes that are non-abstract subclasses of
+    :class:`crate_anon.nlp_manager.base_nlp_parser.BaseNlpParser`.
+
+    Checks that they all have unique names in lower case.
+    """
+    # noinspection PyTypeChecker
+    classes = get_all_subclasses(
+        BaseNlpParser
+    )  # type: List[Type[BaseNlpParser]]  # noqa
+    lower_case_short_names = set()  # type: Set[str]
+    lower_case_full_names = set()  # type: Set[str]
+    for cls in classes:
+        lc_sname = cls.classname().lower()
+        if lc_sname in lower_case_short_names:
+            raise ValueError(
+                f"Trying to add NLP processor {lc_sname!r} but a processor "
+                f"with the same lower-case name already exists"
+            )
+        lower_case_short_names.add(lc_sname)
+
+        lc_fname = cls.fully_qualified_classname().lower()
+        if lc_fname in lower_case_full_names:
+            raise ValueError(
+                f"Trying to add NLP processor {lc_fname!r} but a processor "
+                f"with the same lower-case fully-qualified name already exists"
+            )  # noqa
+        lower_case_full_names.add(lc_fname)
+    return classes
+
+
+def all_tablemaker_classes() -> List[Type[TableMaker]]:
+    """
+    Return all classes that are non-abstract subclasses of
+    :class:`crate_anon.nlp_manager.base_nlp_parser.TableMaker`.
+    """
+    # noinspection PyTypeChecker
+    return get_all_subclasses(TableMaker)
+
+
+def get_nlp_parser_class(classname: str) -> Optional[Type[TableMaker]]:
+    """
+    Fetch an NLP parser class (not instance) by name. The match may be on
+    either the class's short name or the fully-qualified name, and is
+    case-insensitive.
+
+    Args:
+        classname: the name of the NLP parser class
+
+    Returns:
+        the class, or ``None`` if there isn't one with that name
+
+    """
+    classname = classname.lower()
+    classes = all_tablemaker_classes()
+    for cls in classes:
+        if (
+            cls.classname().lower() == classname
+            or cls.fully_qualified_classname().lower() == classname
+        ):
+            return cls
+    return None
+
+
+def make_nlp_parser(
+    classname: str, nlpdef: NlpDefinition, cfg_processor_name: str
+) -> TableMaker:
+    """
+    Fetch an NLP processor instance by name.
+
+    Args:
+        classname:
+            the name of the processor
+        nlpdef:
+            a :class:`crate_anon.nlp_manager.nlp_definition.NlpDefinition`
+        cfg_processor_name:
+            the name (suffix) of a CRATE NLP config file section, passed to the
+            NLP parser as we create it (for it to get extra config information
+            if it wishes)
+
+    Returns:
+        an NLP processor instance whose class name matches (in case-insensitive
+        fashion) ``classname``.
+
+    Raises:
+        :exc:`ValueError` if no such processor is found
+
+    """
+    cls = get_nlp_parser_class(classname)
+    if cls:
+        return cls(nlpdef=nlpdef, cfg_processor_name=cfg_processor_name)
+    raise ValueError(f"Unknown NLP processor type: {classname!r}")
+
+
+def make_nlp_parser_unconfigured(
+    classname: str, raise_if_absent: bool = True
+) -> Optional[TableMaker]:
+    """
+    Get a debugging (unconfigured) instance of an NLP parser.
+
+    Args:
+        classname: the name of the NLP parser class
+        raise_if_absent: raise ``ValueError`` if there is no match?
+
+    Returns:
+        the class, or ``None`` if there isn't one with that name
+
+    """
+    cls = get_nlp_parser_class(classname)
+    if cls:
+        return cls(nlpdef=None, cfg_processor_name=None)
+    if raise_if_absent:
+        raise ValueError(f"Unknown NLP processor type: {classname!r}")
+    return None
+
+
+def possible_local_processor_names() -> List[str]:
+    """
+    Returns all NLP processor names that can run locally.
+    """
+    return [cls.classname() for cls in all_local_parser_classes()]
+
+
+def possible_processor_names_including_cloud() -> List[str]:
+    """
+    Returns all NLP processor names.
+    """
+    return [cls.classname() for cls in all_tablemaker_classes()]
+
+
+def possible_local_processor_names_without_external_tools() -> List[str]:
+    """
+    Returns all NLP processor names for processors that don't rely on external
+    tools.
+    """
+    return [
+        cls.classname()
+        for cls in all_local_parser_classes()
+        if not cls.uses_external_tool
+    ]
+
+
+def possible_processor_table() -> str:
+    """
+    Returns a pretty-formatted string containing a table of all NLP processors
+    and their description (from their docstring).
+    """
+    colnames = ["NLP name", "Description"]
+    rows = []  # type: List[List[str]]
+    for cls in all_tablemaker_classes():
+        name = cls.classname()
+        description = get_docstring(cls)
+        rows.append([name, trim_docstring(description)])
+    return make_twocol_table(colnames, rows, rewrap_right_col=False)
+
+
+def all_crate_python_processors_nlprp_processor_info(
+    sql_dialect: str = None, extra_dict: JsonObjectType = None
+) -> JsonArrayType:
+    """
+    Returns NLPRP processor information for all CRATE Python NLP processors.
+
+    Args:
+        sql_dialect:
+            preferred SQL dialect for response, or ``None`` for a default
+        extra_dict:
+            extra dictionary to merge in for each processor
+
+    Returns:
+        list: list of processor information dictionaries
+    """
+    allprocs = []  # type: JsonArrayType
+    for cls in all_local_parser_classes():
+        instance = cls(None, None)
+        proc_info = instance.nlprp_processor_info(sql_dialect=sql_dialect)
+        if extra_dict:
+            proc_info.update(extra_dict)
+        allprocs.append(proc_info)
+    return allprocs
