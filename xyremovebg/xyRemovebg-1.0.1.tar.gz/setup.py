@@ -1,0 +1,45 @@
+import os
+import pathlib
+import sys
+
+sys.path.append(os.path.dirname(__file__))
+from setuptools import find_packages, setup
+
+import versioneer
+
+here = pathlib.Path(__file__).parent.resolve()
+
+long_description = (here / "README.md").read_text(encoding="utf-8")
+
+with open("requirements.txt") as f:
+    requireds = f.read().splitlines()
+
+with open("requirements-gpu.txt") as f:
+    gpu_requireds = f.read().splitlines()
+
+setup(
+    name="xyRemovebg",
+    description="Remove image background",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    author="chenmingkang",
+    author_email="chenmingkang@qq.com",
+    classifiers=[
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3 :: Only",
+    ],
+    keywords="asassasasaasas",
+    packages=["xyRemovebg"],
+    python_requires=">=3.8, <4",
+    install_requires=requireds,
+    entry_points={
+        "console_scripts": [
+            "xyRemovebg=xyRemovebg.cli:main",
+        ],
+    },
+    extras_require={
+        "gpu": gpu_requireds,
+    },
+    version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
+)
