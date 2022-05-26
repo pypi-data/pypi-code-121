@@ -1,0 +1,1 @@
+from .avirtech_palm_correction import autocorrect
