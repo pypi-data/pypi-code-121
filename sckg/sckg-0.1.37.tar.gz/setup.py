@@ -1,0 +1,49 @@
+#!/usr/bin/env python
+
+"""The setup script."""
+
+from setuptools import setup, find_packages
+
+with open('README.rst', encoding='utf-8') as readme_file:
+    readme = readme_file.read()
+
+with open('HISTORY.rst', encoding='utf-8') as history_file:
+    history = history_file.read()
+
+requirements = ['Click>=7.0', 'kgdt>=0.4.1', 'pygtrie', 'tqdm', 'nltk']
+
+test_requirements = []
+
+setup(
+    author="Software Concept Knowledge Graph",
+    author_email=' lmwtclmwtc@outlook.com',
+    python_requires='>=3.6',
+    classifiers=[
+        'Development Status :: 2 - Pre-Alpha',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: MIT License',
+        'Natural Language :: English',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+    ],
+    description="A Software Concept Knowledge Graph",
+    entry_points={
+        'console_scripts': [
+            'sckg=sckg.cli:main',
+        ],
+    },
+    install_requires=requirements,
+    license="MIT license",
+    long_description=readme + '\n\n' + history,
+    include_package_data=True,
+    keywords='sckg',
+    name='sckg',
+    packages=find_packages(include=['sckg', 'sckg.*']),
+    test_suite='test',
+    tests_require=test_requirements,
+    url='https://github.com/FudanSELab/sckg',
+    version='0.1.37',
+    zip_safe=False,
+)
