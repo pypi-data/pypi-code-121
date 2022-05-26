@@ -1,0 +1,32 @@
+# -*- coding: utf-8 -*-
+from setuptools import setup
+
+packages = \
+['pybotx_smartapp_rpc',
+ 'pybotx_smartapp_rpc.middlewares',
+ 'pybotx_smartapp_rpc.models']
+
+package_data = \
+{'': ['*']}
+
+install_requires = \
+['fastapi>=0.70.0,<0.75.0', 'pybotx>=0.32.0,<0.44.0', 'pydantic>=1.8.2,<2.0.0']
+
+setup_kwargs = {
+    'name': 'pybotx-smartapp-rpc',
+    'version': '0.4.3',
+    'description': 'eXpress SmartApp JSON-RPC library',
+    'long_description': '# BotX-SmartApp-RPC\nБиблиотека, позволяющая писать смартаппы, используя [наш JSONRPC-like протокол](https://ccsteam.atlassian.net/wiki/spaces/EI/pages/193167368/SmartApp+RPC)\n\n## Установка\nИспользуя `poetry`:\n\n```bash\npoetry add pybotx-smartapp-rpc\n```\n\n## Добавление RPC методов\n1. Создайте класс для входящих аргументов:\n``` python\nfrom pybotx_smartap_rpc import RPCArgsBaseModel\n...\nclass SumArgs(RPCArgsBaseModel):\n    a: int\n    b: int\n```\n2. Создайте RPC метод:\n``` python\nfrom pybotx_smartapp_rpc import SmartApp, RPCRouter, RPCResultResponse\n...\nrpc = RPCRouter()\n...\n@rpc.method("sum")\nasync def sum(\n    smartapp: SmartApp, rpc_arguments: SumArgs\n) -> RPCResultResponse[int]:\n    return RPCResultResponse(result=rpc_arguments.a + rpc_arguments.b)\n\n# Так же у метода может не быть аргументов:\n@rpc.method("answer")\nasync def answer(smartapp: SmartApp) -> RPCResultResponse[int]:\n    return RPCResultResponse(result=42)\n```\n3. Создайте экземпляр `SmartAppRPC` и подключите роутер из прошлого пункта:\n``` python\nfrom pybotx_smartapp_rpc import SmartAppRPC\n\nfrom anywhere import methods \n...\nsmartapp = SmartAppRPC(routers=[methods.rpc])\n```\n4. Сделайте хендлер для `smartapp_event` и вызывайте в нем хендлер библиотеки\n``` python\n@collector.smartapp_event\nasync def handle_smartapp_event(event: SmartAppEvent, bot: Bot) -> None:\n    await smartapp.handle_smartapp_event(event, bot)\n```\n\n## Продвинутая работа с библиотекой\n* В `RPCResultResponse` можно передавать `botx.File` файлы.\n``` python\n@rpc.method("get-pdf")\nasync def get_pdf(\n    smartapp: SmartApp, rpc_arguments: GetPDFArgs\n) -> RPCResultResponse[None]:\n    ...\n    return RPCResultResponse(result=None, files=[...])\n```\n* В `SmartAppRPC`, `RPCRouter` и `RPCRouter.method` можно передать мидлвари, сначала будут вызваны мидлвари приложения, затем мидлвари роутера и в конце мидлвари метода.\n``` python\nsmartapp = SmartAppRPC(..., middlewares=[...])\n...\nrpc = RPCRouter(middlewares=[...])\n...\n@rpc.method("sum", middlewares=[...])\n```\n* `RPCArgsBaseModel` это алиас для `pydantic.BaseModel`, вы можете использовать все возможности исходного класса.\n``` python\nfrom uuid import UUID\n...\nclass DelUserArgs(RPCArgsBaseModel):\n    # pydantic сериализует входящую строку в UUID\n    user_huid: UUID\n```\n* Через объект `smartapp`, передаваемый в хендлер можно получить доступ к `event` и `bot`.\n``` python\n...\n@rpc.method("del-user")\nasync def del_user(\n    smartapp: SmartApp, rpc_arguments: DelUserArgs\n) -> RPCResultResponse[None]:\n    await smartapp.bot.send_message(\n        body="Done",\n        bot_id=smartapp.event.bot.id,\n        chat_id=smartapp.event.chat.id,\n    )\n    ...\n```\n* Используя метод `smartapp.send_event` можно отправлять RPC ивенты с `ref: null`.  \nЭто может пригодиться при необходимости отправки уведомления не в ответ на RPC запрос.\n``` python\n@rpc.method("notify-me")\nasync def notify_me(\n    smartapp: SmartApp, rpc_arguments: NotifyMeArgs\n) -> RPCResultResponse[None]:\n    ...\n    await smartapp.send_event("notified", files=[notify_file])\n    ...\n```\n* Используя метод `smartapp.send_push` можно отправлять пуш уведомлений на клиент.\nИ обновлять счетчик уведомлений на икноке смартапа.\n``` python\n@rpc.method("notify-me")\nasync def notify_me(\n    smartapp: SmartApp, rpc_arguments: NotifyMeArgs\n) -> RPCResultResponse[None]:\n    await smartapp.send_push(42, "You have 42 new emails!")\n    ...\n```\n* В мидлварях можно создавать новые объекты в `smartapp.state`, чтобы потом использовать их в хендлерах.\n``` python\nasync def user_middleware(smartapp: SmartApp, rpc_arguments: RPCArgsBaseModel, call_next: Callable) -> RPCResponse[User]:\n    smartapp.state.user = await User.get(smartapp.message.user_huid)\n    return await call_next(smartapp, rpc_arguments)\n\n@rpc.method("get-user-fullname")\nasync def get_user_fullname(smartapp: SmartApp) -> RPCResultResponse[str]:\n    return RPCResultResponse(result=smartapp.state.user.fullname)\n```\n* Можно выбрасывать пользовательские RPC ошибки, которые будут отправлены как ответ на RPC запрос.\n``` python\nfrom pybotx_smartapp_rpc import RPCErrorExc, RPCError\n...\n@rpc.method("return-error")\nasync def return_error(smartapp: SmartApp, rpc_arguments: RaiseOneErrorArgs) -> None:\n    # one error\n    raise RPCErrorExc(\n        RPCError(\n            reason="It\'s error reason",\n            id="CUSTOM_ERROR",\n            meta={"args": rpc_arguments.dict()},\n        )\n    )\n    # or list of errors\n    raise RPCErrorExc(\n        [\n            RPCError(\n                reason="It\'s error reason",\n                id="CUSTOM_ERROR",\n                meta={"args": rpc_arguments.dict()},\n            ),\n            RPCError(\n                reason="It\'s one more error reason",\n                id="CUSTOM_ERROR_NUMBER_TWO",\n                meta={"args": rpc_arguments.dict()},\n            )\n        ]\n    )\n```\n* Можно добавить хендлер на определенный тип исключений. В него будут отправлять исключения того же и дочерних классов.\nХендлер **обязан** возвращать `RPCErrorResponse`, ошибки из которого будут отправлены источнику запроса.\n``` python\nfrom pybotx_smartapp_rpc import SmartAppRPC, RPCErrorResponse\n...\nasync def key_error_handler(exc: KeyError, smartapp: SmartApp) -> RPCErrorResponse:\n    key = exc.args[0]\n    return RPCErrorResponse(\n        errors=[\n            RPCError(\n                reason=f"Key {key} not found.",\n                id="KEY_ERROR",\n                meta={"key": key},\n            ),\n        ]\n    )\n\nsmartapp = SmartAppRPC(..., exception_handlers={KeyError: key_error_handler})\n```\n',
+    'author': 'Arseniy Zhiltsov',
+    'author_email': 'arseniy.zhiltsov@ccsteam.ru',
+    'maintainer': None,
+    'maintainer_email': None,
+    'url': None,
+    'packages': packages,
+    'package_data': package_data,
+    'install_requires': install_requires,
+    'python_requires': '>=3.8,<3.11',
+}
+
+
+setup(**setup_kwargs)
