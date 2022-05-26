@@ -1,0 +1,599 @@
+# Tools for using a Jupyter notebook as a lab notebook that collects and
+# displays data from an analog to digital converter in real time. The interface
+# also allows for annotation, analysis and display of the data using common
+# python tools. Common activities can be done using menus and buttons rather
+# than typing python commands.
+# J. Gutow <gutow@uwosh.edu> July 2021
+# license GPL V3 or greater.
+
+######
+# Environment setup
+######
+# Use os tools for file path and such
+import os
+import time
+import logging
+
+# Start Logging
+logname = 'DAQinstance_' + time.strftime('%y-%m-%d_%H%M%S',
+                                         time.localtime()) + '.log'
+logging.basicConfig(filename=logname, level=logging.INFO)
+
+# below is equivalent to %matplotlib notebook in a Jupyter cell
+from IPython import get_ipython
+
+ipython = get_ipython()
+print('Importing drivers and searching for available data acquisition '
+      'hardware.',end='')
+
+# imports below must work. Allow normal python error response.
+import ipywidgets as widgets
+from pandas_GUI import *
+print ('.',end='')
+
+from plotly import io as pio
+pio.templates.default = "simple_white" #default plot format
+from plotly import graph_objects as go
+print ('.',end='')
+
+import numpy as np
+print ('.',end='')
+
+import pandas as pd
+print ('.',end='')
+
+from IPython.display import display, HTML
+from IPython.display import Javascript as JS
+
+print ('.',end='')
+
+# Below allows asynchronous calls to get and plot the data in real time.
+# Actually read the DAQ board on a different process.
+import threading
+from multiprocessing import Process, Pipe
+
+print('.',end='')
+
+# The process that monitors the board
+from jupyterpidaq.DAQProc import DAQProc
+
+print('.',end='')
+
+# Board definitions
+from jupyterpidaq import Boards as boards
+
+print('.',end='')
+
+global availboards
+availboards = boards.load_boards()
+
+print('.',end='')
+
+# GUI for settings
+from jupyterpidaq.ChannelSettings import ChannelSettings
+
+print('.',end='')
+
+# Sensor definitions
+from jupyterpidaq.Sensors import sensors
+
+print('.',end='')
+
+# globals to put stuff in from threads.
+data = []  # all data from DAQ tools avg_values
+stdev = []  # all standard deviations
+timestamp = []  # all timestamps
+
+# global list to keep track of runs
+runs = []
+
+######
+# Interactive elements definitions
+######
+
+# Locate JupyterPiDAQ package directory
+mydir = os.path.dirname(
+    __file__)  # absolute path to directory containing this file.
+
+# Add a "DAQ Menu" to the notebook.
+tempJSfile = open(os.path.join(mydir, 'javascript', 'JupyterPiDAQmnu.js'))
+tempscript = '<script type="text/javascript">'
+tempscript += tempJSfile.read() + '</script>'
+tempJSfile.close()
+display(HTML(tempscript))
+display(JS('createCmdMenu()'))
+
+print('Done with setup.')
+
+# cleanup log file if it is empty
+logging.shutdown()
+try:
+    if os.stat(logname).st_size == 0:
+        os.remove(logname)
+except FileNotFoundError:
+    pass
+
+# Data Aquistion Instance (a run).
+class DAQinstance():
+    def __init__(self, idno, livefig, title='None', ntraces=4, **kwargs):
+        """
+        Data Aquistion Instance (a run).
+
+        :param idno : id number you wish to use to keep track
+        :param livefig: plotly FigureWidget to use for live display
+        :param title: optional name
+        :param ntraces: number of traces (default = 4) more than 4 easily
+            overwhelms a pi4.
+        :param kwargs:
+            :ignore_skew: bool (default: True) if True only a single average
+            collection time will be recorded for each time in a multichannel
+            data collection. If False a separate set of time will be
+            recorded for each channel.
+        """
+        self.ignore_skew = kwargs.pop('ignore_skew',True)
+        self.idno = idno
+        self.livefig = livefig
+        self.title = str(title)
+        self.averaging_time = 0.1  # seconds adjusted based on collection rate
+        self.gain = [1] * ntraces
+        self.data = []
+        self.timestamp = []
+        self.stdev = []
+        self.pandadf = None
+        self.ntraces = ntraces
+        self.separate_plots = True
+        self.traces = []
+        # index map from returned data to trace,
+        self.tracemap = []
+        self.tracelbls = []
+        self.units = []
+        for i in range(self.ntraces):
+            self.traces.append(ChannelSettings(i, availboards))
+        self.ratemax = 20.0  # Hz
+        self.rate = 1.0  # Hz
+        self.deltamin = 1 / self.ratemax
+        self.delta = 1.0 / self.rate
+        self.setupbtn = widgets.Button(
+            description='Set Parameters',
+            disabled=False,
+            button_style='info',
+            # 'success', 'info', 'warning', 'danger' or ''
+            tooltip='Click to set collection parameters to displayed values.',
+            icon='')
+        self.collectbtn = widgets.Button(
+            description='Start Collecting',
+            disabled=False,
+            button_style='success',
+            # 'success', 'info', 'warning', 'danger' or ''
+            tooltip='Start collecting data and plotting it. '
+                    'Will make new graph.',
+            icon='')
+        self.separate_traces_checkbox = widgets.Checkbox(
+            value = self.separate_plots,
+            description = 'Display multiple traces as stacked graphs. ' \
+                        'Uncheck to display all on the same graph.',
+            layout = widgets.Layout(width='80%'),
+            disabled = False)
+        self.rateinp = widgets.BoundedFloatText(
+            value=self.rate,
+            min=0,
+            max=self.ratemax,
+            step=self.ratemax / 1000.0,
+            description='Rate (Hz):',
+            disabled=False)
+        self.timelbl = widgets.Text(
+            value='Time(s)',
+            placeholder='Type something',
+            description='X-axis label (time):',
+            disabled=False)
+        self.runtitle = widgets.Text(
+            value=self.title,
+            placeholder='Type title/description',
+            description='Run title',
+            disabled=False)
+        self.defaultparamtxt = ''
+        self.defaultcollecttxt = '<span style="color:blue;"> To accurately '
+        self.defaultcollecttxt += 'read point location on graph you can zoom '
+        self.defaultcollecttxt += 'in. Drag to zoom. Additional controls show '
+        self.defaultcollecttxt += 'above plot when you hover over it.</span>'
+        self.collecttxt = widgets.HTML(
+            value=self.defaultcollecttxt,
+            placeholder='',
+            description='')
+        self.setup_layout_bottom = widgets.HBox(
+            [self.rateinp, self.timelbl, self.setupbtn])
+        self.setup_layout = widgets.VBox([self.separate_traces_checkbox,
+                                          self.setup_layout_bottom])
+        self.collect_layout = widgets.HBox([self.collectbtn, self.collecttxt])
+
+    def setupclick(self, btn):
+        # Could just use the values in widgets, but this forces intentional
+        # selection and locks them for the run.
+        self.title = self.runtitle.value
+        self.rate = self.rateinp.value
+        self.delta = 1 / self.rate
+        self.defaultparamtxt = '<div id="DAQRun_' + str(self.idno) + '_param">'
+        self.defaultparamtxt += '<p style="font-weight:bold;">Parameters for run "' + str(
+            self.title)
+        self.defaultparamtxt += '" (run id#: ' + str(
+            self.idno) + ') set to:</p>'
+        self.defaultparamtxt += '<table><tr><td style="font-weight:bold;">Approx. Rate (Hz):</td><td>' + str(
+            self.rate) + '</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;">Approx. Delta (s):</td><td>' + str(
+            self.delta) + '</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;">X-label: </td><td>' + self.timelbl.value + '</td></tr></table>'
+        # table of trace information
+        self.defaultparamtxt += '<table id="traceinfo" class="traceinfo"><tr>'
+        self.defaultparamtxt += '<td style="font-weight:bold;text-align:center;">Trace #</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;text-align:center;">Title</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;text-align:center;">Units</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;text-align:center;">Board</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;text-align:center;">Channel</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;text-align:center;">Sensor</td>'
+        self.defaultparamtxt += '<td style="font-weight:bold;text-align:center;">Gain</td>'
+        self.defaultparamtxt += '</tr><tr>'
+        for i in range(self.ntraces):
+            if (self.traces[i].isactive):
+                self.tracemap.append(i)
+                self.defaultparamtxt += '<td style="text-align:center;">' + str(
+                    i) + '</td>'
+                self.defaultparamtxt += '<td style="text-align:center;">' + \
+                                        self.traces[
+                                            i].tracelbl.value + '</td>'
+                self.defaultparamtxt += '<td style="text-align:center;">' + \
+                                        self.traces[i].units.value + '</td>'
+                self.defaultparamtxt += '<td style="text-align:center;">' + \
+                                        str(self.traces[i].boardchoice.value) +' ' + \
+                                        self.traces[i].board.name + '</td>'
+                self.defaultparamtxt += '<td style="text-align:center;">' + \
+                                        str(self.traces[i].channel) + '</td>'
+                self.defaultparamtxt += '<td style="text-align:center;">' + \
+                                        self.traces[
+                                            i].sensorchoice.value + '</td>'
+                self.defaultparamtxt += '<td style="text-align:center;">' + str(
+                    self.traces[i].gains.value) + '</td>'
+            self.defaultparamtxt += '</tr><tr>'
+            self.traces[i].hideGUI()
+        self.defaultparamtxt += '</tr></table>'
+        self.defaultparamtxt += '</div>'
+        self.runtitle.close()
+        del self.runtitle
+        self.setup_layout.close()
+        del self.setup_layout
+        display(HTML(self.defaultcollecttxt))
+        self.collectbtn.on_click(self.collectclick)
+        display(self.collectbtn)
+        display(HTML(self.defaultparamtxt))
+
+    def setup(self):
+        self.setupbtn.on_click(self.setupclick)
+        display(self.runtitle)
+        for i in range(self.ntraces):
+            self.traces[i].setup()
+        display(self.setup_layout)
+
+    def collectclick(self, btn):
+        if (btn.description == 'Start Collecting'):
+            btn.description = 'Stop Collecting'
+            btn.button_style = 'danger'
+            btn.tooltip = 'Stop the data collection'
+            # do not allow parameters to be reset after starting run.
+            self.setupbtn.disabled = True
+            self.setupbtn.tooltip = 'Parameters locked. The run has started.'
+            self.rateinp.disabled = True
+            self.timelbl.disabled = True
+            thread = threading.Thread(target=self.updatingplot, args=())
+            thread.start()
+            # self.updatingplot() hangs up user interface
+        else:
+            btn.description = 'Done'
+            btn.button_style = ''
+            btn.tooltip = ''
+            time.sleep(3)  # wait a few seconds for end of data collection
+            self.data = data
+            self.timestamp = timestamp
+            self.stdev = stdev
+            self.fillpandadf()
+            # save data to csv file so can be loaded elsewhere.
+            svname = self.title + '_' + time.strftime('%y-%m-%d_%H%M%S',
+                                                      time.localtime()) + '.csv'
+            self.pandadf.to_csv(svname)
+            self.collectbtn.close()
+            del self.collectbtn
+            #display(self.collecttxt)
+            display(HTML(
+                '<span style="color:blue;font-weight:bold;">DATA SAVED TO:' +
+                svname + '</span>'))
+            # Save the notebook with current widget states (plotly plots).
+            jscode = 'Jupyter.actions.call(' \
+                     '"widgets:save-with-widgets");'
+            display(JS(jscode))
+
+    def fillpandadf(self):
+        datacolumns = []
+        temptimes = np.transpose(self.timestamp)
+        tempdata = np.transpose(self.data)
+        tempstdev = np.transpose(self.stdev)
+        chncnt = 0
+        for i in range(self.ntraces):
+            if (self.traces[i].isactive):
+                chncnt += 1
+        for i in range(chncnt):
+            if self.ignore_skew and i > 0:
+                pass
+            else:
+                datacolumns.append(temptimes[i])
+            datacolumns.append(tempdata[i])
+            datacolumns.append(tempstdev[i])
+        titles = []
+        # Column labels.
+        for i in range(self.ntraces):
+            if (self.traces[i].isactive):
+                if self.ignore_skew:
+                    if i == 0:
+                        titles.append(self.timelbl.value)
+                else:
+                    titles.append(self.traces[
+                                  i].tracelbl.value + '_' + self.timelbl.value)
+                titles.append(
+                    self.traces[i].tracelbl.value + '(' + self.traces[
+                        i].units.value + ')')
+                titles.append(
+                    self.traces[i].tracelbl.value + '_' + 'stdev')
+        # print(str(titles))
+        # print(str(datacolumns))
+        self.pandadf = pd.DataFrame(np.transpose(datacolumns), columns=titles)
+
+    def updatingplot(self):
+        """
+        Runs until a check of self.collectbtn.desdcf63064cription does not return
+        'Stop Collecting'. This would probably be more efficient if set a
+        boolean.
+        """
+        starttime = time.time()
+        global data
+        data = []
+        global timestamp
+        timestamp = []
+        global stdev
+        stdev = []
+        datalegend = []
+        timelegend = []
+        stdevlegend = []
+        PLTconn, DAQconn = Pipe()
+        DAQCTL, PLTCTL = Pipe()
+        whichchn = []
+        gains = []
+        toplotx = []
+        toploty = []
+        nactive = 0
+        for k in self.traces:
+            if k.isactive:
+                nactive += 1
+        if self.separate_traces_checkbox.value:
+            self.livefig.set_subplots(rows = nactive, cols = 1,
+                                      shared_xaxes= True)
+            self.livefig.update_xaxes(title = self.timelbl.value,
+                                      row = nactive, col = 1)
+        else:
+            self.livefig.update_yaxes(title = "Values")
+            self.livefig.update_xaxes(title = self.timelbl.value)
+        active_count = 0
+        for i in range(self.ntraces):
+            if (self.traces[i].isactive):
+                whichchn.append({'board':self.traces[i].board,
+                                'chnl':self.traces[i].channel})
+                gains.append(self.traces[i].toselectedgain)
+                tempstr = self.traces[i].tracelbl.value + '(' + \
+                          self.traces[i].units.value + ')'
+                timelegend.append('time_' + tempstr)
+                datalegend.append(tempstr)
+                stdevlegend.append('stdev_' + tempstr)
+                if self.separate_traces_checkbox.value:
+                    scat = go.Scatter(y=[],x=[], name=tempstr)
+                    self.livefig.add_trace(scat, row = nactive-active_count,
+                                           col = 1)
+                    self.livefig.update_yaxes(title = self.traces[
+                        i].units.value, row = nactive-active_count,col = 1)
+                else:
+                    self.livefig.add_scatter(y=[],x=[], name=tempstr)
+                toplotx.append([])
+                toploty.append([])
+                active_count += 1
+        #print('whichchn: '+str(whichchn))
+        #print('gains: '+str(gains))
+        # Use up to 30% of the time for averaging if channels were spaced
+        # evenly between data collection times (with DACQ2 they appear
+        # more synchronous than that).
+        self.averaging_time = self.delta/nactive/3
+        DAQ = Process(target=DAQProc,
+                      args=(
+                      whichchn, gains, self.averaging_time, self.delta,
+                      DAQconn, DAQCTL))
+        DAQ.start()
+        lastupdatetime = time.time()
+
+        pts = 0
+        oldpts = 0
+        #print('about to enter while loop',end='')
+        while (self.collectbtn.description == 'Stop Collecting'):
+            #print('.',end='')
+            while PLTconn.poll():
+                pkg = PLTconn.recv()
+                self.lastpkgstr = str(pkg)
+                #print(self.lastpkgstr)
+                # convert voltage to requested units.
+                tmptime = 0
+                if self.ignore_skew:
+                    tmptime = sum(pkg[0]) / len(pkg[0])
+                for i in range(len(pkg[0])):
+                    avg = pkg[1][i]
+                    std = pkg[2][i]
+                    avg_std = pkg[3][i]
+                    avg_vdd = pkg[4][i]
+                    avg, std, avg_std = self.traces[
+                        self.tracemap[i]].toselectedunits(avg, std, avg_std, avg_vdd)
+                    avg, std, avg_std = sensors.to_reasonable_significant_figures_fast(
+                        avg, std, avg_std)
+                    pkg[1][i] = avg
+                    pkg[2][i] = std
+                    pkg[3][i] = avg_std
+                    if self.ignore_skew:
+                        toplotx[i].append(tmptime)
+                    else:
+                        toplotx[i].append(pkg[0][i])
+                    toploty[i].append(avg)
+                timestamp.append(pkg[0])
+                data.append(pkg[1])
+                stdev.append(pkg[3])
+            currenttime = time.time()
+            mindelay = 1.0
+            if self.separate_traces_checkbox.value:
+                mindelay = nactive*1.0
+            else:
+                mindelay = nactive*0.5
+            if (currenttime - lastupdatetime)>(mindelay+len(toplotx[0])*len(
+                    toplotx)/1000):
+                lastupdatetime = currenttime
+                for k in range(len(self.livefig.data)):
+                    self.livefig.data[k].x=toplotx[k]
+                    self.livefig.data[k].y=toploty[k]
+            #time.sleep(1)
+            PLTCTL.send('send')
+            time.sleep(self.delta)
+            # print ('btn.description='+str(btn.description))
+        endtime = time.time()
+        PLTCTL.send('stop')
+        time.sleep(0.5)  # wait 0.5 second to collect remaining data
+        PLTCTL.send('send')
+        time.sleep(0.5)
+        msg = ''
+        while (msg != 'done'):
+            while PLTconn.poll():
+                pkg = PLTconn.recv()
+                # print(str(pkg))
+                # convert voltage to requested units.
+                for i in range(len(pkg[0])):
+                    avg = pkg[1][i]
+                    std = pkg[2][i]
+                    avg_std = pkg[3][i]
+                    avg_vdd = pkg[4][i]
+                    avg, std, avg_std = self.traces[
+                        self.tracemap[i]].toselectedunits(avg, std, avg_std, avg_vdd)
+                    avg, std, avg_std = sensors.to_reasonable_significant_figures_fast(
+                        avg, std, avg_std)
+                    pkg[1][i] = avg
+                    pkg[2][i] = std
+                    pkg[3][i] = avg_std
+                    if self.ignore_skew:
+                        tmptime = sum(pkg[0])/len(pkg[0])
+                        toplotx[i].append(tmptime)
+                    else:
+                        toplotx[i].append(pkg[0][i])
+                    toploty[i].append(avg)
+                    #print(pkg[0][i])
+                    #print(avg)
+                timestamp.append(pkg[0])
+                data.append(pkg[1])
+                stdev.append(pkg[3])
+            PLTCTL.send('send')
+            time.sleep(0.2)
+            if PLTCTL.poll():
+                msg = PLTCTL.recv()
+                # print (str(msg))
+                if (msg != 'done'):
+                    print('Received unexpected message: ' + str(msg))
+        for k in range(len(self.livefig.data)):
+            self.livefig.data[k].x = toplotx[k]
+            self.livefig.data[k].y = toploty[k]
+        DAQ.join()  # make sure garbage collection occurs when it stops.
+        DAQconn.close()
+        PLTconn.close()
+        DAQCTL.close()
+        PLTCTL.close()
+
+
+def newRun(livefig):
+    """
+    Set up a new data collection run and add it to the list of runs.
+    """
+    nrun = len(runs) + 1
+    runs.append(DAQinstance(nrun, livefig, title='Run-' + str(nrun)))
+    runs[nrun - 1].setup()
+
+def update_runsdrp():
+    # get list of runs
+    runlst = [('Choose Run', -1)]
+    for i in range(len(runs)):
+        runlst.append((str(i + 1) + ': ' + runs[i].title,i))
+    # buid selection menu
+    global runsdrp
+    runsdrp = widgets.Dropdown(
+        options=runlst,
+        value=-1,
+        description='Select Run #:',
+        disabled=False,
+    )
+    pass
+
+def showSelectedRunTable(change):
+    global runsdrp
+    whichrun = runsdrp.value
+    runsdrp.close()
+    tbldiv = '<div style="height:10em;">' + str(runs[whichrun].title)
+    tbldiv += str(runs[whichrun].pandadf.to_html()) + '</div>'
+    display(HTML(tbldiv))
+
+
+def showDataTable():
+    """
+    Provides a menu to select which run. Then displays the run in a
+    10 em high scrolling table. Selection menu is removed after choice
+    is made.
+    """
+    update_runsdrp()
+    global runsdrp
+    runsdrp.observe(showSelectedRunTable, names='value')
+    display(runsdrp)
+    # will display selected run and delete menu upon selection.
+
+def update_columns(change):
+    global runsdrp
+    whichrun = runsdrp.value
+    return runs[whichrun].pandadf.columns
+
+def newCalculatedColumn():
+    """
+    Uses jupyter-pandas-GUI.new_pandas_column_GUI to provide a GUI expression
+    composer. This method finds the datasets and launches the GUI.
+    """
+    df_info = []
+    for i in range(len(runs)):
+        df_info.append([runs[i].pandadf, 'runs['+str(i)+'].pandadf',
+                        str(runs[i].title)])
+    new_pandas_column_GUI(df_info)
+    pass
+
+def newPlot():
+    """
+    Uses jupyter-pandas-GUI.plot_pandas_GUI to provide a GUI expression
+    composer. This method finds the datasets and launches the GUI.
+    """
+    df_info = []
+    for i in range(len(runs)):
+        df_info.append([runs[i].pandadf, 'runs['+str(i)+'].pandadf',
+                        str(runs[i].title)])
+    plot_pandas_GUI(df_info)
+    pass
+
+def newFit():
+    """
+    Uses jupyter-pandas-GUI.fit_pandas_GUI to provide a GUI expression
+    composer. This method finds the datasets and launches the GUI.
+    """
+    df_info = []
+    for i in range(len(runs)):
+        df_info.append([runs[i].pandadf, 'runs['+str(i)+'].pandadf',
+                        str(runs[i].title)])
+    fit_pandas_GUI(df_info)
+    pass
