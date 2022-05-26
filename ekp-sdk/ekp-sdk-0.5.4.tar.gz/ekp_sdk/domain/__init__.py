@@ -1,0 +1,1 @@
+from ekp_sdk.domain.log import Log
