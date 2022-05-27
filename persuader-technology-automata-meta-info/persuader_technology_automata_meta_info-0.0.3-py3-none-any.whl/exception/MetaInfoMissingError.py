@@ -1,0 +1,2 @@
+class MetaInfoMissingError(Exception):
+    pass

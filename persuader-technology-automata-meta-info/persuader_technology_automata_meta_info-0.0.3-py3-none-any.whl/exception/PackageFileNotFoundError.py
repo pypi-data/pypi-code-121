@@ -1,0 +1,2 @@
+class PackageFileNotFoundError(Exception):
+    pass
