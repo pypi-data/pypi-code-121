@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+from setuptools import setup
+
+packages = \
+['classy_classification',
+ 'classy_classification.classifiers',
+ 'classy_classification.examples']
+
+package_data = \
+{'': ['*']}
+
+install_requires = \
+['scikit-learn>=1.0,<2.0',
+ 'sentence-transformers>=2.0,<3.0',
+ 'spacy[transformers]>=3.0,<4.0',
+ 'txtai[pipeline]>=4.5.0,<5.0.0']
+
+setup_kwargs = {
+    'name': 'classy-classification',
+    'version': '0.4.4',
+    'description': "Have you every struggled with needing a Spacy TextCategorizer but didn't have the time to train one from scratch? Classy Classification is the way to go!",
+    'long_description': '# Classy Classification\nHave you every struggled with needing a [Spacy TextCategorizer](https://spacy.io/api/textcategorizer) but didn\'t have the time to train one from scratch? Classy Classification is the way to go! For few-shot classification using [sentence-transformers](https://github.com/UKPLab/sentence-transformers) or [spaCy models](https://spacy.io/usage/models), provide a dictionary with labels and examples, or just provide a list of labels for zero shot-classification with [Hugginface zero-shot classifiers](https://huggingface.co/models?pipeline_tag=zero-shot-classification). \n\n[![Current Release Version](https://img.shields.io/github/release/pandora-intelligence/classy-classification.svg?style=flat-square&logo=github)](https://github.com/pandora-intelligence/classy-classification/releases)\n[![pypi Version](https://img.shields.io/pypi/v/classy-classification.svg?style=flat-square&logo=pypi&logoColor=white)](https://pypi.org/project/classy-classification/)\n[![PyPi downloads](https://static.pepy.tech/personalized-badge/classy-classification?period=total&units=international_system&left_color=grey&right_color=orange&left_text=pip%20downloads)](https://pypi.org/project/classy-classification/)\n[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg?style=flat-square)](https://github.com/ambv/black)\n\n# Install\n``` pip install classy-classification```\n# Quickstart\n## SpaCy embeddings\n```\nimport spacy\nimport classy_classification\n\ndata = {\n    "furniture": ["This text is about chairs.",\n               "Couches, benches and televisions.",\n               "I really need to get a new sofa."],\n    "kitchen": ["There also exist things like fridges.",\n                "I hope to be getting a new stove today.",\n                "Do you also have some ovens."]\n}\n\nnlp = spacy.load("en_core_web_md")\nnlp.add_pipe(\n    "text_categorizer", \n    config={\n        "data": data, \n        "model": "spacy"\n    }\n) \n\nprint(nlp("I am looking for kitchen appliances.")._.cats)\n\n# Output:\n#\n# [{"label": "furniture", "score": 0.21}, {"label": "kitchen", "score": 0.79}]\n```\n## Sentence-transfomer embeddings\n```\nimport spacy\nimport classy_classification\n\ndata = {\n    "furniture": ["This text is about chairs.",\n               "Couches, benches and televisions.",\n               "I really need to get a new sofa."],\n    "kitchen": ["There also exist things like fridges.",\n                "I hope to be getting a new stove today.",\n                "Do you also have some ovens."]\n}\n\nnlp = spacy.blank("en")\nnlp.add_pipe(\n    "text_categorizer", \n    config={\n        "data": data, \n        "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",\n        "device": "gpu"\n    }\n) \n\nprint(nlp("I am looking for kitchen appliances.")._.cats)\n\n# Output:\n#\n# [{"label": "furniture", "score": 0.21}, {"label": "kitchen", "score": 0.79}]\n```\n## Hugginface zero-shot classifiers\n```\nimport spacy\nimport classy_classification\n\ndata = ["furniture", "kitchen"]\n\nnlp = spacy.blank("en")\nnlp.add_pipe(\n    "text_categorizer", \n    config={\n        "data": data, \n        "model": "facebook/bart-large-mnli",\n        "cat_type": "zero",\n        "device": "gpu"\n    }\n) \n\nprint(nlp("I am looking for kitchen appliances.")._.cats)\n\n# Output:\n#\n# [{"label": "furniture", "score": 0.21}, {"label": "kitchen", "score": 0.79}]\n```\n# Credits\n## Inspiration Drawn From\n[Huggingface](https://huggingface.co/) does offer some nice models for few/zero-shot classification, but these are not tailored to multi-lingual approaches. Rasa NLU has [a nice approach](https://rasa.com/blog/rasa-nlu-in-depth-part-1-intent-classification/) for this, but its too embedded in their codebase for easy usage outside of Rasa/chatbots. Additionally, it made sense to integrate [sentence-transformers](https://github.com/UKPLab/sentence-transformers) and [Hugginface zero-shot](https://huggingface.co/models?pipeline_tag=zero-shot-classification), instead of default [word embeddings](https://arxiv.org/abs/1301.3781). Finally, I decided to integrate with Spacy, since training a custom [Spacy TextCategorizer](https://spacy.io/api/textcategorizer) seems like a lot of hassle if you want something quick and dirty. \n\n- [Scikit-learn](https://github.com/scikit-learn/scikit-learn)\n- [Rasa NLU](https://github.com/RasaHQ/rasa) \n- [Sentence Transformers](https://github.com/UKPLab/sentence-transformers)\n- [Spacy](https://github.com/explosion/spaCy)\n\n## Or buy me a coffee\n[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/98kf2552674)\n\n\n# Standalone usage without spaCy\n\n```\nfrom classy_classification import classyClassifier\n\ndata = {\n    "furniture": ["This text is about chairs.",\n               "Couches, benches and televisions.",\n               "I really need to get a new sofa."],\n    "kitchen": ["There also exist things like fridges.",\n                "I hope to be getting a new stove today.",\n                "Do you also have some ovens."]\n}\n\nclassifier = classyClassifier(data=data)\nclassifier("I am looking for kitchen appliances.")\nclassifier.pipe(["I am looking for kitchen appliances."])\n\n# overwrite training data\nclassifier.set_training_data(data=data)\nclassifier("I am looking for kitchen appliances.")\n\n# overwrite [embedding model](https://www.sbert.net/docs/pretrained_models.html)\nclassifier.set_embedding_model(model="paraphrase-MiniLM-L3-v2")\nclassifier("I am looking for kitchen appliances.")\n\n# overwrite SVC config\nclassifier.set_svc(\n    config={                              \n        "C": [1, 2, 5, 10, 20, 100],\n        "kernels": ["linear"],                              \n        "max_cross_validation_folds": 5\n    }\n)\nclassifier("I am looking for kitchen appliances.")\n```\n\n# Todo\n\n[ ] look into a way to integrate spacy trf models.\n\n[ ] multiple clasifications datasets for a single input e.g. emotions and topic.\n',
+    'author': 'David Berenstein',
+    'author_email': 'david.berenstein@pandoraintelligence.com',
+    'maintainer': None,
+    'maintainer_email': None,
+    'url': 'https://github.com/davidberenstein1957/classy-classification',
+    'packages': packages,
+    'package_data': package_data,
+    'install_requires': install_requires,
+    'python_requires': '>=3.7,<4.0',
+}
+
+
+setup(**setup_kwargs)
