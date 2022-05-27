@@ -1,0 +1,1 @@
+from yurymultiplier import multiplier
