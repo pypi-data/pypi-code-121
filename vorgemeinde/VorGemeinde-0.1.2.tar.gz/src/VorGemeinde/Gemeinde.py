@@ -1,0 +1,2 @@
+def randomGemeinde():
+    return "Fußach"
