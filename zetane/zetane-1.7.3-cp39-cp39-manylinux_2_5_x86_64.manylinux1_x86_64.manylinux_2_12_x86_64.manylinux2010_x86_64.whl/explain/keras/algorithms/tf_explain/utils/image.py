@@ -1,0 +1,29 @@
+
+
+def apply_grey_patch(image, top_left_x, top_left_y, patch_size):
+    """
+    Replace a part of the image with a grey patch.
+
+    Args:
+        image (numpy.ndarray): Input image
+        top_left_x (int): Top Left X position of the applied box
+        top_left_y (int): Top Left Y position of the applied box
+        patch_size (int): Size of patch to apply
+
+    Returns:
+        numpy.ndarray: Patched image
+    """
+    return None
+
+
+def transform_to_normalized_grayscale(tensor):
+    """
+    Transform tensor over RGB axis to grayscale.
+
+    Args:
+        tensor (tf.Tensor): 4D-Tensor with shape (batch_size, H, W, 3)
+
+    Returns:
+        tf.Tensor: 4D-Tensor of grayscale tensor, with shape (batch_size, H, W, 1)
+    """
+    return None
