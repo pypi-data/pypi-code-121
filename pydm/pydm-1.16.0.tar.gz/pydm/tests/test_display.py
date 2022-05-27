@@ -1,0 +1,36 @@
+import os
+import pytest
+from pydm import Display
+
+# The path to the .ui file used in these tests
+test_ui_path = os.path.join(
+    os.path.dirname(os.path.realpath(__file__)),
+    "test_data", "test.ui")
+
+
+def test_ui_filename_arg(qtbot):
+    """If you supply a valid filename argument, you shouldn't get any exceptions."""
+    my_display = Display(parent=None, ui_filename=test_ui_path)
+    qtbot.addWidget(my_display)
+
+
+def test_reimplemented_ui_filename(qtbot):
+    """If you reimplement ui_filename and return a valid filename, you
+    shouldn't get any exceptions."""
+    class TestDisplay(Display):
+        def ui_filename(self):
+            return test_ui_path
+    my_display = TestDisplay(parent=None)
+    qtbot.addWidget(my_display)
+
+
+def test_nonexistant_ui_file_raises(qtbot):
+    with pytest.raises(IOError):
+        my_display = Display(parent=None, ui_filename="this_doesnt_exist.ui")
+
+    class TestDisplay(Display):
+        def ui_filename(self):
+            return "this_doesnt_exist.ui"
+
+    with pytest.raises(IOError):
+        my_display = TestDisplay(parent=None)
