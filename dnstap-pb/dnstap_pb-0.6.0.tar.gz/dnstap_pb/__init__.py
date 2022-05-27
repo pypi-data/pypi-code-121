@@ -1,0 +1,1 @@
+from dnstap_pb.dnstap_pb2 import *
