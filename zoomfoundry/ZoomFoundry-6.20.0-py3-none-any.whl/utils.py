@@ -1,0 +1,1142 @@
+# -*- coding: utf-8 -*-
+
+"""
+    zoom.utils
+"""
+import collections
+import configparser
+import decimal
+import datetime
+import hmac
+import hashlib
+import logging
+import os
+import string
+import uuid
+
+import zoom.jsonz as json
+
+
+POSITIVE = [True, 1, 'True', 'yes', 'y', 'on', '1']
+NEGATIVE = [False, 0, 'False', 'no', 'n', 'off', '0']
+
+chars = ''.join(map(chr, range(256)))
+keep_these = string.ascii_letters + string.digits + '-_ '
+delete_these = chars.translate(str.maketrans(chars, chars, keep_these))
+allowed = str.maketrans(keep_these, keep_these, delete_these)
+
+logger = logging.getLogger(__name__)
+
+
+def create_csrf_token():
+    """Create and return a canonical CSRF token; a un-segmented UUID4."""
+    return uuid.uuid4().hex
+
+
+def pretty(obj):
+    """return an object in a pretty form
+
+    >>> obj = dict(name='Joe', age=25)
+    >>> pretty(obj)
+    '{\\n  "age": 25,\\n  "name": "Joe"\\n}'
+    """
+    try:
+        return json.dumps(obj, indent=2, sort_keys=True)
+    except TypeError:
+        if isinstance(obj, dict):
+            return '{\n%s\n}' % '\n'.join([
+                '  {!r} {}: {!r}'.format(key, '.' * (15 - len(key)), value)
+                for key, value in sorted(obj.items())
+            ])
+        elif isinstance(obj, set):
+            return '{\n%s\n}' % ',\n'.join([
+                '  {!r}'.format(key)
+                for key in sorted(obj)
+            ])
+        elif hasattr(obj, '__dict__'):
+            return '<%s \n%s\n>' % (obj.__class__.__name__, '\n'.join([
+                '  {} {}: {!r}'.format(key, '.' * (15 - len(key)), value)
+                for key, value in sorted(obj.__dict__.items())
+            ]))
+        else:
+            return repr(obj)
+
+
+def pp(obj):
+    """pretty print an object
+
+    >>> obj = dict(name='Joe', age=25)
+
+    >>> pp(obj)
+    {
+      "age": 25,
+      "name": "Joe"
+    }
+
+    """
+    # pylint: disable=C0103
+    print(pretty(obj))
+
+
+def dictify(item):
+    """prepare an object for transmission by marshalling it's members
+
+    Marshals only members that json can handle.
+
+    >>> class Thing(object): pass
+    >>> pp(dictify(Bunch(name='Terry', age=21, funky_type=Thing())))
+    {
+      "age": 21,
+      "name": "Terry"
+    }
+
+    """
+    # pylint: disable=W0703
+
+    result = {}
+    for k, v in item.__dict__.items():
+        try:
+            json.dumps(v)
+        except Exception:
+            pass
+        else:
+            result[k] = v
+    return result
+
+
+def sorted_column_names(names):
+    def looks_like_an_id(text):
+        return text.endswith('_id')
+
+    id_names = sorted(name for name in names if looks_like_an_id(name))
+    special_names = id_names + [
+        'id', 'userid', 'groupid', 'key',
+        'name', 'title', 'description',
+        'first_name', 'middle_name', 'last_name', 'fname', 'lname'
+    ]
+    result = []
+    for name in special_names:
+        if name in names:
+            result.append(name)
+    for name in sorted(names, key=lambda a: (len(a), a)):
+        if name not in result:
+            result.append(name)
+    return result
+
+
+def kind(o):
+    """
+    returns a suitable table name for an object based on the object class
+    """
+    n = []
+    for c in o.__class__.__name__:
+        if c.isalpha() or c == '_':
+            if c.isupper() and len(n):
+                n.append('_')
+            n.append(c.lower())
+    return ''.join(n)
+
+
+def id_for(*args):
+    """Calculates a valid HTML tag id given an arbitrary string.
+
+    >>> id_for('Test 123')
+    'test-123'
+    >>> id_for('New Record')
+    'new-record'
+    >>> id_for('New "special" Record')
+    'new-special-record'
+    >>> id_for("hi", "test")
+    'hi~test'
+    >>> id_for("hi test")
+    'hi-test'
+    >>> id_for("hi-test")
+    'hi-test'
+    >>> id_for(1234)
+    '1234'
+    >>> id_for('this %$&#@^is##-$&*!it')
+    'this-is-it'
+    >>> id_for('test-this')
+    'test-this'
+    """
+    def id_(text):
+        return str(text).strip().translate(allowed).lower().replace(' ', '-')
+
+    return '~'.join([id_(arg) for arg in args])
+
+
+def name_for(text):
+    """Calculates a valid HTML field name given an arbitrary string.
+
+    >>> name_for('Test 123')
+    'test_123'
+    >>> name_for('New Record')
+    'new_record'
+    >>> name_for('New "special" Record')
+    'new_special_record'
+    >>> name_for("hi test")
+    'hi_test'
+    >>> name_for("hi-test")
+    'hi_test'
+    >>> name_for(1234)
+    '1234'
+    >>> name_for('this %$&#@^is##-$&*!it')
+    'this_is_it'
+    >>> name_for('test-this')
+    'test_this'
+    """
+    return id_for(text).replace('-', '_')
+
+
+def trim(text):
+    """Remove the left most spaces for markdown
+
+    >>> trim('remove right ')
+    'remove right'
+
+    >>> trim(' remove left')
+    'remove left'
+
+    >>> print(trim(' remove spaces\\n    from block\\n    of text'))
+    remove spaces
+       from block
+       of text
+
+    >>> print(
+    ...     trim(
+    ...     '    \\n'
+    ...     '    remove spaces\\n'
+    ...     '        from block\\n'
+    ...     '        of text\\n'
+    ...     '    \\n'
+    ...     '\\n'
+    ...     )
+    ... )
+    <BLANKLINE>
+    remove spaces
+        from block
+        of text
+    <BLANKLINE>
+    <BLANKLINE>
+
+    >>> print(trim('    remove spaces\\n  from block\\n  of text\\n    '))
+      remove spaces
+    from block
+    of text
+    <BLANKLINE>
+
+    >>> print(trim('    remove spaces\\n  from block\\n  of text'))
+      remove spaces
+    from block
+    of text
+
+    >>> print(trim('\\n  remove spaces\\n    from block\\n  of text'))
+    <BLANKLINE>
+    remove spaces
+      from block
+    of text
+
+    >>> text = '\\nremove spaces  \\n    from block\\nof text'
+    >>> print('\\n'.join(repr(t) for t in trim(text).splitlines()))
+    'remove spaces  '
+    '    from block'
+    'of text'
+
+    >>> text = (
+    ...     '\\nremove spaces'
+    ...     '\\n    from block'
+    ... )
+    >>> print(trim(text))
+    remove spaces
+        from block
+
+    """
+    trim_size = None
+    lines = text.splitlines()
+    for line in lines:
+        if not line or line.isspace():
+            continue
+        n = len(line) - len(line.lstrip())
+        trim_size = min([trim_size, n]) if trim_size is not None else n
+    if trim_size:
+        result = []
+        for line in lines:
+            result.append(line[trim_size:])
+        return '\n'.join(result)
+    else:
+        return text.strip()
+
+
+class ItemList(list):
+    """
+    list of data items
+
+    >>> items = ItemList()
+    >>> items.append(['Joe', 12, 125])
+    >>> items
+    [['Joe', 12, 125]]
+    >>> print(items)
+    Column 0 Column 1 Column 2
+    -------- -------- --------
+    Joe            12      125
+
+    >>> items.insert(0, ['Name', 'Score', 'Points'])
+    >>> print(items)
+    Name Score Points
+    ---- ----- ------
+    Joe     12    125
+
+    >>> data = [
+    ...     ['Joe', 12, 125],
+    ...     ['Sally', 13, 1354],
+    ... ]
+    >>> items = ItemList(data)
+    >>> print(items)
+    Column 0 Column 1 Column 2
+    -------- -------- --------
+    Joe            12      125
+    Sally          13    1,354
+
+    >>> data = [
+    ...     ['Joe', 12, 125],
+    ...     ['Sally', 13, 135],
+    ... ]
+    >>> items = ItemList(data, labels=['Name', 'Score', 'Points'])
+    >>> print(items)
+    Name  Score Points
+    ----- ----- ------
+    Joe      12    125
+    Sally    13    135
+
+    >>> data = [
+    ...     [10000, 'Joe', 12, 125],
+    ...     [10001, 'Sally', 13, 135],
+    ... ]
+    >>> items = ItemList(data, labels=['_id', 'Name', 'Score', 'Points'])
+    >>> print(items)
+    _id   Name  Score Points
+    ----- ----- ----- ------
+    10000 Joe      12    125
+    10001 Sally    13    135
+
+    >>> import datetime
+    >>> now = datetime.date(2020, 2, 1)
+    >>> data = [
+    ...     [10000, 'Joe', now - datetime.date(1980, 1, 20)],
+    ...     [10001, 'Sally', now - datetime.date(1984, 9, 20)],
+    ... ]
+    >>> items = ItemList(data, labels=['_id', 'Name', 'Age'])
+    >>> print(items)
+    _id   Name  Age
+    ----- ----- -------------------
+    10000 Joe   14622 days, 0:00:00
+    10001 Sally 12917 days, 0:00:00
+
+    >>> import datetime
+    >>> now = datetime.date(2020, 2, 1)
+    >>> data = [
+    ...     [10000, 'Joe', now - datetime.date(1980, 1, 20)],
+    ...     [10001, 'Sally', now - datetime.date(1984, 9, 20)],
+    ... ]
+    >>> items = ItemList(data, labels=['user_id', 'Name', 'Age'])
+    >>> print(items)
+    user_id Name  Age
+    ------- ----- -------------------
+      10000 Joe   14622 days, 0:00:00
+      10001 Sally 12917 days, 0:00:00
+
+    >>> import datetime
+    >>> now = datetime.date(2020, 2, 1)
+    >>> data = [
+    ...     [9000, 'Greens', 1234],
+    ...     [10000, 'Browns', 1203],
+    ... ]
+    >>> items = ItemList(data, labels=['id', 'customer', 'invoice_number'])
+    >>> print(items)
+    id    customer invoice_number
+    ----- -------- --------------
+     9000 Greens             1234
+    10000 Browns             1203
+    """
+    def __init__(self, *args, **kwargs):
+        self.labels = kwargs.pop('labels', None)
+        list.__init__(self, *args, **kwargs)
+
+    def __str__(self):
+        def is_text(value):
+            return type(value) in [str, bytes]
+
+        def name_column(number):
+            return 'Column {}'.format(number)
+
+        def is_homogeneous(values):
+            return any([
+                len(values) <= 1,
+                all(type(values[0]) == type(i) for i in values[1:]),
+            ])
+
+        def get_format(label, values):
+            first_non_null = list(
+                map(type, [a for a in values if a is not None])
+            )[:1]
+            if first_non_null:
+                data_type = first_non_null[0]
+                if label in ['_id', 'userid']:
+                    return '{:>{width}}'
+                elif label == 'id':
+                    return '{:>{width}}'
+                elif label.endswith('_id'):
+                    return '{:>{width}}'
+                elif label.endswith('_number'):
+                    return '{:>{width}}'
+                elif data_type in [int, float, decimal.Decimal]:
+                    return '{:{width},}'
+                elif data_type in [datetime.date]:
+                    return '{:%Y-%m-%d}'
+                elif data_type in [datetime.timedelta]:
+                    return '{:}'
+                elif data_type in [datetime.datetime]:
+                    return '{:%Y-%m-%d %H:%M:%S}'
+            return '{:<{width}}'
+
+        def nvl(value):
+            if value is None:
+                return 'None'
+            return value
+
+        if len(self) == 0:
+            return ''
+
+        num_columns = len(list(self[0]))
+        columns = list(range(num_columns))
+
+        # calculate labels
+        if self.labels:
+            labels = self.labels
+            offset = 0
+        else:
+            if not all(is_text(label) for label in self[0]):
+                labels = [name_column(i) for i in range(num_columns)]
+                offset = 0
+            else:
+                labels = self[0]
+                offset = 1
+
+        # rows containing data
+        rows = [list(nvl(v) for v in row) for row in self[offset:]]
+
+        # calculate formats
+        formats = []
+        for col in columns:
+            values = [row[col] for row in rows]
+            if is_homogeneous(values):
+                formats.append(get_format(labels[col], values))
+            else:
+                formats.append('{}')
+
+        # calulate formatted values
+        formatted_values = [labels] + [
+            [
+                formats[col].format(row[col], width=0)
+                for col in columns
+            ] for row in rows
+        ]
+
+        # calculate column widths
+        data_widths = {}
+        for row in formatted_values:
+            for col in columns:
+                n = data_widths.get(col, 0)
+                m = len(row[col])
+                if n < m:
+                    data_widths[col] = m
+
+        label_format = '{:<{width}}'
+        formatted_labels = [
+            label_format.format(l, width=data_widths[i])
+            for i, l in enumerate(labels)
+        ]
+
+        sorted_names = sorted_column_names(labels)
+
+        for i, v in enumerate(formats):
+            formats[i] = v if v != '{}' else '{:<{width}}'
+
+        if not self.labels:
+            columns = sorted(columns, key=lambda a: sorted_names.index(labels[a]))
+        dashes = ['-' * data_widths[col] for col in columns]
+        sorted_labels = [formatted_labels[col] for col in columns]
+
+        aligned_rows = [sorted_labels] + [dashes] + [
+            [
+                formats[col].format(row[col], width=data_widths[col])
+                for col in columns
+            ] for row in rows
+        ]
+
+        lines = [' '.join(row).rstrip() for row in aligned_rows]
+
+        return '\n'.join(lines)
+
+
+def parents(path):
+    """Return list of parent directories"""
+    if not os.path.isdir(path):
+        return parents(os.path.split(os.path.abspath(path))[0])
+    parent = os.path.abspath(os.path.join(path, os.pardir))
+    if path == parent:
+        return []
+    else:
+        return [path] + parents(parent)
+
+
+def locate_config(filename='zoom.conf', start='.'):
+    """locate a config file
+
+    First look in the current directory or above and then look
+    in the user root directory and above.
+    """
+    for path in parents(start):
+        pathname = os.path.join(path, filename)
+        if os.path.exists(pathname):
+            return pathname
+    for path in parents(os.path.join(os.path.expanduser('~'))):
+        pathname = os.path.join(path, filename)
+        if os.path.exists(pathname):
+            return pathname
+
+
+class Config(object):
+    """Config File Reader
+
+    A Config with a handy get method.
+
+    >>> import zoom
+    >>> config = Config(zoom.tools.zoompath('zoom', '_assets', 'web','sites','default','site.ini'))
+    >>> config.get('site', 'name')
+    'ZOOM'
+
+    >>> config.has_option('site', 'name')
+    True
+
+    >>> config.get('site', 'size', 100)
+    100
+
+    >>> try:
+    ...     config.get('site', 'size')
+    ... except (configparser.NoOptionError, configparser.NoSectionError):
+    ...     error = True
+    >>> error
+    True
+    """
+
+    def __init__(self, filename):
+        self.filename = filename
+        self.config = configparser.ConfigParser(strict=False)
+        if not filename or not os.path.exists(filename):
+            raise Exception('%s file missing' % filename)
+        self.config.read(filename)
+
+    def get(self, section, option, default=None):
+        """Get a config file value supplying an optional defalt value."""
+        try:
+            return self.config.get(section, option)
+        except (configparser.NoOptionError, configparser.NoSectionError):
+            if default is not None:
+                return default
+            raise
+
+    def has_option(self, section, option):
+        """Return True if config file option exists."""
+        return (
+            self.config and self.config.has_option(section, option)
+        )
+
+    def has_section(self, section):
+        """Return True if config file section exists."""
+        return (
+            self.config and self.config.has_section(section)
+        )
+
+
+def get_config(filename):
+    """load a config file into a Config object
+
+    >>> get_config('doesnt_exist.conf')
+    """
+    pathname = locate_config(filename)
+    if pathname:
+        return Config(pathname)
+
+
+class OrderedSet(collections.MutableSet):
+    """OrderedSet
+
+    A set that preserves the order of the elements
+
+    >>> s = OrderedSet('abracadaba')
+    >>> t = OrderedSet('simsalabim')
+    >>> print(s | t)
+    OrderedSet(['a', 'b', 'r', 'c', 'd', 's', 'i', 'm', 'l'])
+    >>> print(s & t)
+    OrderedSet(['a', 'b'])
+    >>> print(s - t)
+    OrderedSet(['r', 'c', 'd'])
+    >>> print(OrderedSet(reversed(s - t)))
+    OrderedSet(['d', 'c', 'r'])
+    >>> OrderedSet(['d', 'c', 'd']) == OrderedSet(['c', 'd', 'd'])
+    False
+
+    credit: http://code.activestate.com/recipes/576694/
+    Licensed under MIT License
+    """
+
+    def __init__(self, iterable=None):
+        self.end = end = []
+        end += [None, end, end]         # sentinel node for doubly linked list
+        self.map = {}                   # key --> [key, prev, next]
+        if iterable is not None:
+            self |= iterable
+
+    def __len__(self):
+        return len(self.map)
+
+    def __contains__(self, key):
+        """test if item is present
+
+            >>> s = OrderedSet([1, 2, 3])
+            >>> 'c' in s
+            False
+            >>> 2 in s
+            True
+        """
+        return key in self.map
+
+    def add(self, key):
+        """add an item
+
+            >>> s = OrderedSet([1, 2, 3])
+            >>> s.add(4)
+            >>> s
+            OrderedSet([1, 2, 3, 4])
+        """
+        if key not in self.map:
+            end = self.end
+            curr = end[1]
+            curr[2] = end[1] = self.map[key] = [key, curr, end]
+
+    def discard(self, key):
+        """discard an item by key
+
+            >>> s = OrderedSet([1, 2, 3])
+            >>> s.discard(1)
+            >>> s
+            OrderedSet([2, 3])
+        """
+        if key in self.map:
+            key, prev, _next = self.map.pop(key)
+            prev[2] = _next
+            _next[1] = prev
+
+    def __iter__(self):
+        end = self.end
+        curr = end[2]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[2]
+
+    def __reversed__(self):
+        end = self.end
+        curr = end[1]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[1]
+
+    def pop(self, last=True):
+        """pop an item
+
+            >>> s = OrderedSet([1, 2, 3])
+            >>> s.pop(2)
+            3
+            >>> s
+            OrderedSet([1, 2])
+        """
+        if not self:
+            raise KeyError('set is empty')
+        key = self.end[1][0] if last else self.end[2][0]
+        self.discard(key)
+        return key
+
+    def __repr__(self):
+        if not self:
+            return '%s()' % (self.__class__.__name__,)
+        return '%s(%r)' % (self.__class__.__name__, list(self))
+
+    def __eq__(self, other):
+        if isinstance(other, OrderedSet):
+            return len(self) == len(other) and list(self) == list(other)
+        return set(self) == set(other)
+
+
+class Bunch(object):
+    """a handy bunch of variables"""
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+class Storage(dict):
+    """
+    A Storage object is like a dictionary except `obj.foo` can be used
+    in addition to `obj['foo']`.
+
+        >>> o = Storage(a=1)
+        >>> o.a
+        1
+        >>> o['a']
+        1
+        >>> o.a = 2
+        >>> o['a']
+        2
+        >>> del o.a
+        >>> o.a
+
+    """
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError as k:
+            return None
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __delattr__(self, key):
+        try:
+            del self[key]
+        except KeyError as k:
+            raise AttributeError(k)
+
+    def __repr__(self):
+        return '<Storage ' + dict.__repr__(self) + '>'
+
+
+def get_attributes(obj):
+    def properties(obj):
+        if type(obj) == dict:
+            return []
+        items = list(obj.__class__.__dict__.items())
+        return [k for k, v in items if type(v) == property]
+    names = list(obj.keys()) + properties(obj)
+    return sorted_column_names(names)
+
+
+class Record(Storage):
+    """
+    A dict with attribute access to items, attributes and properties
+
+        >>> class Foo(Record):
+        ...     full = property(lambda a: a.fname + ' ' + a.lname)
+        ...
+        >>> f = Foo(fname='Joe', lname='Smith')
+        >>> f.full
+        'Joe Smith'
+        >>> f['full']
+        'Joe Smith'
+        >>> 'The name is %(full)s' % f
+        'The name is Joe Smith'
+        >>> print(f)
+        Foo
+          fname ...............: 'Joe'
+          lname ...............: 'Smith'
+          full ................: 'Joe Smith'
+
+        >>> f.attributes()
+        ['fname', 'lname', 'full']
+
+        >>> class FooBar(Record):
+        ...     full = property(lambda a: a.fname + ' ' + a.lname)
+        ...
+        >>> o = FooBar(a=2)
+        >>> kind(o)
+        'foo_bar'
+        >>> o.a
+        2
+        >>> o['a']
+        2
+        >>> o.double = property(lambda o: 2*o.a)
+        >>> o.double
+        4
+        >>> o['double']
+        4
+        >>> del o.a
+        >>> print(o.a)
+        None
+
+        >>> class Foo(Record):
+        ...     full = property(lambda a: a.fname + ' ' + a.lname)
+        ...
+        >>> f = Foo(fname='Joe', lname='Smith')
+        >>> f.full
+        'Joe Smith'
+        >>> f['full']
+        'Joe Smith'
+        >>> 'The name is %(full)s' % f
+        'The name is Joe Smith'
+        >>> getattr(f,'full')
+        'Joe Smith'
+
+        >>> print(Foo(_id=1, fname='Jane', lname='Smith'))
+        Foo
+          fname ...............: 'Jane'
+          lname ...............: 'Smith'
+          full ................: 'Jane Smith'
+
+        >>> o = Record(a=2)
+        >>> o.a
+        2
+        >>> o.valid()
+        1
+        >>> o.attributes()
+        ['a']
+        >>> o['a']
+        2
+        >>> o.double = property(lambda o: 2*o.a)
+        >>> o.double
+        4
+        >>> o['double']
+        4
+        >>> del o.a
+        >>> o.a
+
+    """
+
+    def save(self):
+        """save record"""
+        record_id = self['__store'].put(self)
+        key = self['__store'].id_name
+        logger.debug(
+            'saved record %s(%s=%r) to %r',
+            self.__class__.__name__,
+            key,
+            self[key],
+            self['__store']
+        )
+        return record_id
+
+    def set(self, **kwargs):
+        """set record values"""
+        key = self['__store'].id_name
+        values = dict(kwargs)
+        record_id = self['__store'].set(self[key], values)
+        logger.debug(
+            'set record %s(%s=%r) values %r to %r',
+            self.__class__.__name__,
+            key,
+            self[key],
+            values,
+            self['__store']
+        )
+        self.update(kwargs)
+        return record_id
+
+    def attributes(self):
+        return get_attributes(self)
+
+    def valid(self):
+        return 1
+
+    def allows(self, user, action):
+        return True
+
+    def get(self, name, *default):
+        try:
+            return self.__getitem__(name)
+        except KeyError as k:
+            if default:
+                return default[0]
+            raise k
+
+    def __getitem__(self, name):
+        try:
+            value = dict.__getitem__(self, name)
+            if hasattr(value, '__get__'):
+                getter = getattr(value, '__get__')
+                if getter is not None:
+                    return getter(self)
+                else:
+                    return value
+            else:
+                return value
+        except KeyError as k:
+            try:
+                value = self.__class__.__dict__[name]
+                if hasattr(value, '__get__'):
+                    getter = getattr(value, '__get__')
+                    if getter:
+                        return getter(self)
+                    else:
+                        return value
+                else:
+                    return value
+            except KeyError as k:
+                raise k
+
+    def __str__(self):
+        name = self.__class__.__name__
+        attributes = self.attributes()
+        t = []
+
+        items = [
+            (key, self.get(key, None)) for key in attributes
+            if not key.startswith('_')
+        ]
+
+        for key, value in items:
+            if callable(value):
+                v = value()
+            else:
+                v = value
+            t.append('  {} {}: {!r}'.format(
+                key,
+                '.'*(20-len(key[:20])),
+                v
+            ))
+        return '\n'.join([name] + t)
+
+
+    def __repr__(self):
+        name = self.__class__.__name__
+        attributes = self.attributes()
+        t = []
+
+        items = [
+            (key, self.get(key, None)) for key in attributes
+            if not key.startswith('_')
+        ]
+
+        for key, value in items:
+            if callable(value):
+                v = value()
+            else:
+                v = value
+            t.append((repr(key), repr(v)))
+        return '<%s {%s}>' % (
+            name, ', '.join('%s: %s' % (k, v) for k, v in t)
+        )
+
+
+class DefaultRecord(Record):
+    """
+    A Record with default values
+
+        >>> class Foo(DefaultRecord): pass
+        >>> foo = Foo(name='Sam')
+        >>> foo.name
+        'Sam'
+        >>> foo.phone
+        ''
+    """
+
+    def __getitem__(self, name):
+        try:
+            return Record.__getitem__(self, name)
+        except KeyError:
+            return ''
+
+
+class RecordList(list):
+    """a list of Records"""
+
+    def __str__(self):
+        """
+        represent as a string
+
+            >>> import datetime
+            >>> class Person(Record): pass
+            >>> class People(RecordList): pass
+            >>> people = People()
+            >>> people.append(Person(_id=1, name='Joe', age=20,
+            ...     birthdate=datetime.date(1992,5,5)))
+            >>> people.append(Person(_id=2, name='Samuel', age=25,
+            ...     birthdate=datetime.date(1992,4,5)))
+            >>> people.append(Person(_id=3, name='Sam', age=35,
+            ...     birthdate=datetime.date(1992,3,5)))
+            >>> print(people)
+            person
+            _id name   age birthdate
+            --- ------ --- ----------
+              1 Joe     20 1992-05-05
+              2 Samuel  25 1992-04-05
+              3 Sam     35 1992-03-05
+            3 person records
+
+            >>> people = People()
+            >>> people.append(Person(userid=1, name='Joe', age=20,
+            ...     birthdate=datetime.date(1992,5,5)))
+            >>> people.append(Person(userid=2, name='Samuel', age=25,
+            ...     birthdate=datetime.date(1992,4,5)))
+            >>> people.append(Person(userid=3, name='Sam', age=35,
+            ...     birthdate=datetime.date(1992,3,5)))
+            >>> print(people)
+            person
+            userid name   age birthdate
+            ------ ------ --- ----------
+                 1 Joe     20 1992-05-05
+                 2 Samuel  25 1992-04-05
+                 3 Sam     35 1992-03-05
+            3 person records
+
+        """
+
+        def visible(name):
+            return not name.startswith('__')
+
+        if not bool(self):
+            return 'Empty list'
+
+        title = '%s\n' % kind(self[0])
+
+        keys = labels = list(filter(visible, get_attributes(self[0])))
+        rows = [[record.get(key, None) for key in keys] for record in self]
+
+        footer = '\n{} {} records'.format(len(self), kind(self[0]))
+
+        return title + str(ItemList(rows, labels=labels)) + footer
+
+    def __init__(self, *a, **k):
+        list.__init__(self, *a, **k)
+        self._n = 0
+
+    def __iter__(self):
+        self._n = 0
+        return self
+
+    def __next__(self):
+        if self._n >= len(self):
+            raise StopIteration
+        else:
+            result = self[self._n]
+            self._n += 1
+        return result
+
+
+def matches(item, terms):
+    """Returns True if an item matches search terms"""
+    if not terms: return True
+    try:
+        values = item.values()
+    except AttributeError:
+        values = item
+    v = [str(i).lower() for i in values]
+    return all(any(t in s for s in v) for t in terms)
+
+
+def search(items, text):
+    """Returns items that match search terms
+
+    >>> items = [
+    ...     {'name': 'Terry', 'instrument': 'guitar, drums, picolo', 'age': 25},
+    ...     {'name': 'Pat', 'instrument': 'drums, vocals', 'age': 29},
+    ...     {'name': 'Francis', 'instrument': 'saxophone, piano', 'age': 35},
+    ... ]
+
+    >>> pp(list(search(items, 'drums')))
+    [
+      {
+        "age": 25,
+        "instrument": "guitar, drums, picolo",
+        "name": "Terry"
+      },
+      {
+        "age": 29,
+        "instrument": "drums, vocals",
+        "name": "Pat"
+      }
+    ]
+
+    >>> pp(list(search(items, 'drums pat')))
+    [
+      {
+        "age": 29,
+        "instrument": "drums, vocals",
+        "name": "Pat"
+      }
+    ]
+
+    >>> pp(list(search(items, '')))
+    [
+      {
+        "age": 25,
+        "instrument": "guitar, drums, picolo",
+        "name": "Terry"
+      },
+      {
+        "age": 29,
+        "instrument": "drums, vocals",
+        "name": "Pat"
+      },
+      {
+        "age": 35,
+        "instrument": "saxophone, piano",
+        "name": "Francis"
+      }
+    ]
+
+    >>> pp(list(search(items, None)))
+    [
+      {
+        "age": 25,
+        "instrument": "guitar, drums, picolo",
+        "name": "Terry"
+      },
+      {
+        "age": 29,
+        "instrument": "drums, vocals",
+        "name": "Pat"
+      },
+      {
+        "age": 35,
+        "instrument": "saxophone, piano",
+        "name": "Francis"
+      }
+    ]
+
+    >>> sorted(list(search((list(item.values()) for item in items), '35'))[0], key=str)
+    [35, 'Francis', 'saxophone, piano']
+
+    """
+    search_terms = list(set([i.lower() for i in text.strip().split()])) if text else []
+    for item in items:
+        if matches(item, search_terms):
+            yield item
+
+
+def generate_key():
+    """make a new key
+
+    >>> len(generate_key())
+    40
+    """
+    new_uuid = uuid.uuid4().bytes
+    return hmac.new(new_uuid, digestmod=hashlib.sha1).hexdigest()
+
+
+def existing(path, subdir=None):
+    """Returns existing directories only"""
+    realpath = os.path.realpath
+    join = os.path.join
+    exists = os.path.exists
+
+    pathname = (
+        path and subdir and join(realpath(path), subdir) or
+        path and realpath(path)
+        )
+    if pathname and exists(pathname):
+        return pathname
+
+
+def dedup(seq):
+    """Remove duplicates while retaining order"""
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
