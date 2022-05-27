@@ -1,0 +1,1 @@
+NOT_AVAILABLE = 'N/A'
