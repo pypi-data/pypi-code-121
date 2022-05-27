@@ -1,0 +1,1 @@
+from .pyrebase_modific import initialize_app
