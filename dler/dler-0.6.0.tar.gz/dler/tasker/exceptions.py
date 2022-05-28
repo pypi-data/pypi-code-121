@@ -1,0 +1,3 @@
+
+class FileExistsException(Exception):
+    pass
