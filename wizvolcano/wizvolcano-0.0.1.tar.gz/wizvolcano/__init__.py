@@ -1,0 +1,1 @@
+from wizvolcano.volcano import Wizvolcano
