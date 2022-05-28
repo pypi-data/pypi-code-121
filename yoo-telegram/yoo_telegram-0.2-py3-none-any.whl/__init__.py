@@ -1,0 +1,1 @@
+from yoo_telegram.Notifier import Notifier
