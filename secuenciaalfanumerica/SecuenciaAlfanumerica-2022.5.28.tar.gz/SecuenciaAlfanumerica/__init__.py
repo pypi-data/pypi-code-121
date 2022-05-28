@@ -1,0 +1,3 @@
+from SecuenciaAlfanumerica.SecuenciaAlfanumerica import NumDiccionario
+from SecuenciaAlfanumerica.SecuenciaAlfanumerica import DiccionarioNum
+from SecuenciaAlfanumerica.SecuenciaAlfanumerica import DiccionarioPredeter
