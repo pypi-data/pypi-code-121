@@ -1,0 +1,1 @@
+from .cracks import main
