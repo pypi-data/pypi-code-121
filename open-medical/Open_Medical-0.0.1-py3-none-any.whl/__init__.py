@@ -1,0 +1,1 @@
+from open_medical.main import all_in_one
