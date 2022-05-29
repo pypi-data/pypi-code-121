@@ -1,0 +1,6 @@
+class InvalidEmailException(Exception):
+    ...
+
+
+class UserNotFoundException(Exception):
+    ...
