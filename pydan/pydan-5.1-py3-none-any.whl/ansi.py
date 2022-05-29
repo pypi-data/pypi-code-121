@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+
+c={
+	"none":"\x1b[0m",
+	"bold":"\x1b[1m",
+	## foreground
+	"black":"\x1b[38;5;235m",
+	"gray":"\x1b[38;5;240m",
+	"white":"\x1b[38;5;247m",
+	"lightwhite":"\x1b[38;5;231m",
+	"red":"\x1b[38;5;124m",
+	"lightred":"\x1b[38;5;196m",
+	"green":"\x1b[38;5;28m",
+	"lightgreen":"\x1b[38;5;83m",
+	"maroon":"\x1b[38;5;94m",
+	"yellow":"\x1b[38;5;226m",
+	"blue":"\x1b[38;5;25m",
+	"lightblue":"\x1b[38;5;39m",
+	"pink":"\x1b[38;5;128m",
+	"lightpink":"\x1b[38;5;206m",
+	"cyan":"\x1b[38;5;30m",
+	"lightcyan":"\x1b[38;5;50m",
+	"orange":"\x1b[38;5;166m",
+	"lightorange":"\x1b[38;5;214m",
+	"salmon":"\x1b[38;5;174m",
+	"olive":"\x1b[38;5;106m",
+	"purple":"\x1b[38;5;93m",
+	"violet":"\x1b[38;5;105m",
+	"magenta":"\x1b[38;5;199m",
+	## background
+	"bluebg":"\x1b[48;5;17m",
+	"greenbg":"\x1b[48;5;22m",
+	"cyanbg":"\x1b[48;5;23m",
+	"graybg":"\x1b[48;5;237m",
+}
