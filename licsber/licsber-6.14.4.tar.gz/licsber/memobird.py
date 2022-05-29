@@ -1,0 +1,93 @@
+import requests
+from pymongo import InsertOne
+
+from licsber.github import get_secret
+from licsber.utils.ubase64 import to_gbk_base64
+from licsber.utils.utime import localtime_str
+
+URLS = {
+    'set_user_bind': 'https://open.memobird.cn/home/setuserbind',
+    'print_paper': 'https://open.memobird.cn/home/printpaper',
+    'get_print_status': 'https://open.memobird.cn/home/getprintstatus'
+}
+
+
+def set_user_bind(ak: str, device_id: str, identifying='licsber') -> str:
+    """
+    绑定userid.
+    :param ak: 开发者ak.
+    :param device_id: 设备id 双击机器吐出来的.
+    :param identifying: 用户自定义字符串.
+    :return: 绑定成功的userid, 失败返回空串.
+    """
+    params = {
+        'ak': ak,
+        'timestamp': localtime_str(),
+        'memobirdID': device_id,
+        'useridentifying': identifying,
+    }
+    res = requests.post(URLS['set_user_bind'], params=params).json()
+    if res['showapi_res_code'] != 1:
+        print(res)
+        return ''
+
+    return str(res['showapi_userid'])
+
+
+def send_text_message(text: str,
+                      ak: str = get_secret('L_MEMO_AK'),
+                      device_id: str = get_secret('L_MEMO_DEVICE'),
+                      userid=None) -> str:
+    """
+    向咕咕机发送纯文本消息.
+    :param text: 文本信息.
+    :param ak: 开发者ak.
+    :param device_id: 设备id 双击机器吐出来的.
+    :param userid: 可选的userid.
+    :return: 打印id, 失败返回空串.
+    """
+    params = {
+        'ak': ak,
+        'timestamp': localtime_str(),
+        'printcontent': 'T:' + to_gbk_base64(text),
+        'memobirdID': device_id,
+        'userID': userid if userid else set_user_bind(ak, device_id, device_id),
+    }
+    res = requests.post(URLS['print_paper'], params=params).json()
+    if res['showapi_res_code'] != 1:
+        print(res)
+        return ''
+
+    return str(res['printcontentid'])
+
+
+def get_status(ak: str, print_id: str) -> str:
+    """
+    获取消息发送的状态.
+    :param ak: 开发者ak.
+    :param print_id: 打印接口返回的打印id.
+    :return: 已经打印返回1, 失败返回空串.
+    """
+    params = {
+        'ak': ak,
+        'timestamp': localtime_str(),
+        'printcontentid': print_id,
+    }
+    res = requests.post(URLS['get_print_status'], params=params).json()
+    if res['showapi_res_code'] != 1:
+        print(res)
+        return ''
+
+    return str(res['printflag'])
+
+
+def log_message(message: str):
+    """
+    生成mongo日志, 偷懒的接口.
+    :param message: 文本信息.
+    :return: 插入结果.
+    """
+    return InsertOne({
+        'type': 'plain',
+        'text': message,
+    })
