@@ -1,0 +1,3 @@
+
+class UnsupportedException(Exception):
+    pass
