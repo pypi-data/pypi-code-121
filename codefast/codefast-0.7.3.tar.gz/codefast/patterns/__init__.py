@@ -1,0 +1,1 @@
+from codefast.patterns.responsibility_chain import ResponsibilityChain
